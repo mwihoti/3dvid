@@ -1,0 +1,11 @@
+# stylize.py extras — install into the existing nunif venv:
+#   ./nunif/venv/bin/pip install -r requirements-stylize.txt
+# (torch / numpy / tqdm already come from nunif's own requirements.txt)
+opencv-python-headless>=4.9
+scikit-learn>=1.4          # MiniBatchKMeans for the 24-colour palette
+rembg[cpu]>=2.0.60         # u2net_human_seg person mask (pulls onnxruntime)
+
+# --- web UI (serve.py) ---
+fastapi>=0.110
+uvicorn>=0.27
+python-multipart>=0.0.9     # multipart form uploads

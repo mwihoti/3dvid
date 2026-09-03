@@ -1,0 +1,19 @@
+# secrets
+.env
+*.env
+# media / renders / caches
+*.mp4
+*.webm
+*.mov
+*.mkv
+*.png
+uploads/
+outputs/
+.stylize_cache/
+*_frames/
+serve.log
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/

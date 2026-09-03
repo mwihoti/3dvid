@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>3dvid studio</title>
+<style>
+:root{
+  --bg:#05070f; --panel:#0b1020; --panel2:#111834; --line:#1d2748;
+  --ink:#e7ecff; --dim:#8f9bc4; --cyan:#39c6ff; --pink:#ff2d95;
+  --orange:#ff6a00; --teal:#19d4c8; --ok:#3ddc97; --err:#ff5f6d;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(60% 50% at 70% 0%,rgba(26,77,255,.16),transparent 70%),
+             radial-gradient(40% 40% at 10% 100%,rgba(255,45,149,.10),transparent 70%)}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:28px 20px 60px}
+h1{margin:0 0 2px;font-size:20px;letter-spacing:.3px}
+h1 span{background:linear-gradient(90deg,var(--orange),var(--pink) 55%,#8a2bff);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--dim);font-size:12.5px;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:18px;align-items:start}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:linear-gradient(180deg,var(--panel),#080d1a);border:1px solid var(--line);
+  border-radius:14px;padding:16px}
+.card h2{margin:0 0 12px;font-size:12px;text-transform:uppercase;letter-spacing:1.4px;color:var(--dim)}
+label{display:block;font-size:12px;color:var(--dim);margin:12px 0 5px}
+select,input[type=number],input[type=text]{width:100%;background:#070c18;color:var(--ink);
+  border:1px solid var(--line);border-radius:9px;padding:9px 10px;font:inherit;font-size:13px}
+select:focus,input:focus{outline:none;border-color:var(--cyan)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1 1 auto;min-width:64px;background:#070c18;color:var(--dim);
+  border:1px solid var(--line);border-radius:9px;padding:9px 6px;font:inherit;font-size:12.5px;
+  cursor:pointer;transition:.15s}
+.seg button:hover{color:var(--ink);border-color:#2b3a6b}
+.seg button[aria-pressed=true]{background:linear-gradient(180deg,#182248,#0e1530);
+  color:var(--ink);border-color:var(--cyan);box-shadow:0 0 0 1px rgba(57,198,255,.25),0 0 18px -6px var(--cyan)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.drop{border:1.5px dashed #26325c;border-radius:12px;padding:20px 14px;text-align:center;
+  color:var(--dim);cursor:pointer;transition:.15s;font-size:13px}
+.drop:hover,.drop.over{border-color:var(--cyan);color:var(--ink);background:rgba(57,198,255,.05)}
+.drop b{color:var(--ink)}
+.go{width:100%;margin-top:16px;padding:13px;border:0;border-radius:11px;cursor:pointer;
+  font:inherit;font-weight:650;font-size:14px;color:#06101f;
+  background:linear-gradient(90deg,var(--cyan),var(--teal));transition:.15s}
+.go:hover{filter:brightness(1.08)}
+.go:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(.5)}
+.ghost{background:transparent;border:1px solid var(--line);color:var(--dim);
+  border-radius:9px;padding:7px 12px;cursor:pointer;font:inherit;font-size:12px}
+.ghost:hover{color:var(--ink);border-color:var(--err)}
+.bar{height:7px;background:#0a1024;border-radius:99px;overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;border-radius:99px;transition:width .35s ease;
+  background:linear-gradient(90deg,var(--orange),var(--pink),#8a2bff)}
+.job{border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:11px;background:#080d1a}
+.job.done{border-color:rgba(61,220,151,.4)} .job.error{border-color:rgba(255,95,109,.45)}
+.job-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.tag{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;padding:3px 8px;border-radius:99px;
+  border:1px solid var(--line);color:var(--dim)}
+.tag.running{color:var(--cyan);border-color:rgba(57,198,255,.45)}
+.tag.done{color:var(--ok);border-color:rgba(61,220,151,.45)}
+.tag.error{color:var(--err);border-color:rgba(255,95,109,.45)}
+.meta{font-size:11.5px;color:var(--dim);margin-top:4px}
+pre.log{margin:9px 0 0;background:#05080f;border:1px solid #131b33;border-radius:8px;
+  padding:9px;font-size:11px;color:#7e8ab4;max-height:130px;overflow:auto;white-space:pre-wrap}
+video{width:100%;border-radius:10px;margin-top:11px;background:#000;display:block}
+.dl{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap}
+.dl a{font-size:12px;color:var(--cyan);text-decoration:none;border:1px solid var(--line);
+  border-radius:8px;padding:6px 11px}
+.dl a:hover{border-color:var(--cyan);background:rgba(57,198,255,.07)}
+.warn{font-size:11.5px;color:#ffca7a;background:rgba(255,170,60,.07);
+  border:1px solid rgba(255,170,60,.25);border-radius:9px;padding:9px 11px;margin-top:12px}
+.empty{color:var(--dim);font-size:13px;text-align:center;padding:26px 0}
+.hide{display:none}
+.chk{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink);
+  margin:10px 0 2px;cursor:pointer}
+.chk input{width:16px;height:16px;accent-color:var(--cyan);cursor:pointer;margin:0}
+.chk span{color:var(--dim);font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span>3dvid studio</span></h1>
+  <div class="sub" id="hw">local render console</div>
+
+  <div class="grid">
+    <!-- ------------------------------------------------ controls -->
+    <div class="card">
+      <h2>1 · Source</h2>
+      <div class="drop" id="drop">
+        <b>Drop a video</b> or click to browse<br>mp4 · mov · webm · mkv — up to 512 MB
+      </div>
+      <input type="file" id="file" accept="video/*" class="hide">
+      <label>Uploaded clips</label>
+      <select id="video"></select>
+
+      <h2 style="margin-top:22px">2 · Pipeline</h2>
+      <div class="seg" id="kind">
+        <button data-v="stylize" aria-pressed="true">Stylise</button>
+        <button data-v="sbs3d" aria-pressed="false">3D stereo</button>
+      </div>
+
+      <div id="stylizeOpts">
+        <label>Effect</label>
+        <div class="seg" id="effect">
+          <button data-v="voxel" aria-pressed="true">Voxel</button>
+          <button data-v="contour" aria-pressed="false">Neon</button>
+          <button data-v="both" aria-pressed="false">Both</button>
+          <button data-v="clean" aria-pressed="false">Clean</button>
+        </div>
+        <label>Face</label>
+        <div class="seg" id="face_mode">
+          <button data-v="off" aria-pressed="true">Effect everywhere</button>
+          <button data-v="clear" aria-pressed="false">Keep face clear</button>
+          <button data-v="only" aria-pressed="false">Face only</button>
+        </div>
+        <div class="row hide" id="faceToRow">
+          <div><label>Mask down to</label>
+            <select id="face_to"><option value="neck">Below the neck (auto)</option><option value="chin">Chin</option></select>
+          </div>
+          <div><label>Extra chin/beard slack <span style="color:var(--dim)">(0-0.4 of height)</span></label>
+            <input id="face_pad" value="0.05">
+          </div>
+        </div>
+        <label>Background</label>
+        <div class="seg" id="bg">
+          <button data-v="plasma" aria-pressed="true">Plasma</button>
+          <button data-v="grid" aria-pressed="false">Grid</button>
+          <button data-v="dark" aria-pressed="false">Dark</button>
+          <button data-v="filmed" aria-pressed="false">Filmed (real)</button>
+          <button data-v="source" aria-pressed="false">Filmed FX</button>
+        </div>
+        <label>Layout</label>
+        <div class="seg" id="layout">
+          <button data-v="wide" aria-pressed="true">Wide 16:9</button>
+          <button data-v="portrait" aria-pressed="false">Portrait 9:16</button>
+          <button data-v="square" aria-pressed="false">Square 1:1</button>
+          <button data-v="native" aria-pressed="false">Native (source size)</button>
+        </div>
+        <div class="row3">
+          <div><label>Bands</label><input type="number" id="bands" value="12" min="3" max="40"></div>
+          <div><label>Min cell</label><input type="number" id="min_cell" value="8" min="4" max="40"></div>
+          <div><label>Max cell</label><input type="number" id="max_cell" value="24" min="6" max="64"></div>
+        </div>
+        <label>Sharpen clear face / clean pixels <span style="color:var(--dim)">(0 = off, try 0.6 for soft footage)</span></label>
+        <input type="number" id="sharpen" value="0" min="0" max="1.5" step="0.1">
+        <div class="row">
+          <div><label>H.264 CRF</label><input type="number" id="crf" value="32" min="14" max="45"></div>
+          <div><label>WebM CRF</label><input type="number" id="webm_crf" value="44" min="20" max="60"></div>
+        </div>
+      </div>
+
+      <div id="sbsOpts" class="hide">
+        <label>Stereo format</label>
+        <div class="seg" id="sbs_format">
+          <button data-v="half-sbs" aria-pressed="true">Half-SBS</button>
+          <button data-v="half-tb" aria-pressed="false">Half-TB</button>
+          <button data-v="anaglyph" aria-pressed="false">Anaglyph</button>
+        </div>
+        <div class="row">
+          <div><label>Divergence</label><input type="number" id="divergence" value="2.0" step="0.5" min="0.5" max="8"></div>
+          <div><label>Max height</label><input type="number" id="max_height" value="720" step="60" min="360" max="2160"></div>
+        </div>
+        <div class="warn">Half-SBS looks like a duplicated image on a flat screen — that is correct. It only resolves as 3D in a headset. Anaglyph previews on a normal screen with red/cyan glasses.</div>
+      </div>
+
+      <h2 style="margin-top:22px">3 · Audio &amp; length</h2>
+      <label class="chk"><input type="checkbox" id="keep_audio" checked>
+        Keep the original sound<span>copied, not re-encoded</span></label>
+      <label>Preview seconds (0 = whole clip)</label>
+      <input type="number" id="preview" value="3" min="0" max="600" step="1">
+      <div class="warn" id="timeWarn">CPU-only box: a 30 s stylise render takes roughly 8 min, plus a one-off ~11 min depth+mask pass per new clip. Start with a 3 s preview.</div>
+
+      <button class="go" id="go">Render</button>
+    </div>
+
+    <!-- ------------------------------------------------ jobs -->
+    <div class="card">
+      <h2>Renders</h2>
+      <div id="jobs"><div class="empty">Nothing rendered yet.</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const pick = {kind:'stylize', effect:'voxel', bg:'plasma', layout:'wide', face_mode:'off', sbs_format:'half-sbs'};
+
+// segmented buttons
+document.querySelectorAll('.seg').forEach(seg => {
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if(!b) return;
+    [...seg.children].forEach(c => c.setAttribute('aria-pressed', c===b));
+    pick[seg.id] = b.dataset.v;
+    if(seg.id === 'face_mode') $('#faceToRow').classList.toggle('hide', pick.face_mode === 'off');
+    if(seg.id === 'kind'){
+      $('#stylizeOpts').classList.toggle('hide', pick.kind !== 'stylize');
+      $('#sbsOpts').classList.toggle('hide', pick.kind === 'stylize');
+    }
+  });
+});
+
+// ---- upload
+const drop = $('#drop'), fileIn = $('#file');
+drop.onclick = () => fileIn.click();
+['dragenter','dragover'].forEach(t => drop.addEventListener(t, e => {
+  e.preventDefault(); drop.classList.add('over');
+}));
+['dragleave','drop'].forEach(t => drop.addEventListener(t, e => {
+  e.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', e => { if(e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+fileIn.onchange = () => { if(fileIn.files[0]) upload(fileIn.files[0]); };
+
+async function upload(f){
+  drop.innerHTML = `Uploading <b>${f.name}</b> …`;
+  const fd = new FormData(); fd.append('file', f);
+  try{
+    const r = await fetch('/api/upload', {method:'POST', body:fd});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail || 'upload failed');
+    drop.innerHTML = `<b>${j.name}</b> · ${j.mb} MB · ${j.w}×${j.h} · ${j.duration}s<br>drop another to replace`;
+    await loadVideos(j.name);
+  }catch(err){ drop.innerHTML = `<b style="color:var(--err)">${err.message}</b><br>click to retry`; }
+}
+
+async function loadVideos(sel){
+  const list = await (await fetch('/api/videos')).json();
+  const s = $('#video');
+  s.innerHTML = list.map(v => `<option value="${v.name}">${v.name} — ${v.mb} MB</option>`).join('')
+             || '<option value="">no clips uploaded</option>';
+  if(sel) s.value = sel;
+}
+
+// ---- render
+$('#go').onclick = async () => {
+  const v = $('#video').value;
+  if(!v) return alert('Upload a clip first.');
+  const fd = new FormData();
+  fd.append('video', v);
+  fd.append('kind', pick.kind);
+  fd.append('preview', $('#preview').value || 0);
+  fd.append('keep_audio', $('#keep_audio').checked ? 'true' : 'false');
+  if(pick.kind === 'stylize'){
+    fd.append('effect', pick.effect); fd.append('bg', pick.bg); fd.append('layout', pick.layout);
+    fd.append('face_mode', pick.face_mode);
+    fd.append('face_pad', $('#face_pad').value || 0.05);
+    fd.append('sharpen', $('#sharpen').value || 0);
+    fd.append('face_to', $('#face_to').value);
+    ['bands','min_cell','max_cell','crf','webm_crf'].forEach(k => fd.append(k, $('#'+k).value));
+  }else{
+    fd.append('sbs_format', pick.sbs_format);
+    ['divergence','max_height'].forEach(k => fd.append(k, $('#'+k).value));
+  }
+  $('#go').disabled = true;
+  try{
+    const r = await fetch('/api/render', {method:'POST', body:fd});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail || 'render failed to start');
+    poll();
+  }catch(err){ alert(err.message); }
+  finally{ $('#go').disabled = false; }
+};
+
+// ---- jobs
+function render(jobs){
+  const el = $('#jobs');
+  if(!jobs.length){ el.innerHTML = '<div class="empty">Nothing rendered yet.</div>'; return; }
+  el.innerHTML = jobs.map(j => {
+    const pct = Math.min(100, Math.round(j.percent));
+    const players = (j.outputs||[]).filter(o => o.name.endsWith('.mp4'))
+      .map(o => `<video controls preload="metadata" src="/media/${o.name}"></video>`).join('');
+    const dl = (j.outputs||[]).map(o =>
+      `<a href="/media/${o.name}" download>${o.name.split('.').pop().toUpperCase()} · ${o.mb} MB</a>`).join('');
+    return `<div class="job ${j.status}">
+      <div class="job-top">
+        <div><b>${j.label}</b><div class="meta">${j.kind} · ${j.elapsed}s${j.stage?' · '+j.stage:''}</div></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="tag ${j.status}">${j.status}</span>
+          ${j.status==='running'?`<button class="ghost" onclick="cancelJob('${j.id}')">stop</button>`:''}
+        </div>
+      </div>
+      ${j.status==='running'?`<div class="bar"><i style="width:${pct}%"></i></div>
+        <div class="meta">${pct}%${j.message?' · '+j.message:''}</div>`:''}
+      ${j.status==='done'?`<div class="meta" style="color:var(--ok);margin-top:6px">${j.message}</div>${players}<div class="dl">${dl}</div>`:''}
+      ${j.status==='error'?`<div class="meta" style="color:var(--err);margin-top:6px">${j.message}</div>
+        <pre class="log">${(j.log||[]).join('\n').replace(/[<>]/g,'')}</pre>`:''}
+    </div>`;
+  }).join('');
+}
+
+window.cancelJob = async id => { await fetch(`/api/jobs/${id}/cancel`, {method:'POST'}); poll(); };
+
+let timer = null;
+async function poll(){
+  const jobs = await (await fetch('/api/jobs')).json();
+  render(jobs);
+  const busy = jobs.some(j => j.status === 'running' || j.status === 'queued');
+  clearTimeout(timer);
+  timer = setTimeout(poll, busy ? 1200 : 5000);
+}
+
+(async () => {
+  await loadVideos();
+  const h = await (await fetch('/api/health')).json();
+  $('#hw').textContent = `torch ${h.torch} · ${h.cuda ? 'CUDA' : 'CPU-only'} · renders run on the server`;
+  poll();
+})();
+</script>
+</body>
+</html>

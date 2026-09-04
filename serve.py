@@ -12,18 +12,23 @@ Two pipelines:
 Jobs run as subprocesses; progress is scraped from the tqdm/iw3 stderr stream.
 State is in-memory - this is a single-user local tool, not a service.
 """
-import asyncio, os, re, shutil, signal, subprocess, time, uuid
+import asyncio, json, os, re, shutil, signal, subprocess, sys, time, uuid
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PY = os.path.join(HERE, "nunif", "venv", "bin", "python")
-UPLOADS = os.path.join(HERE, "uploads")
-OUTPUTS = os.path.join(HERE, "outputs")
+_VENV_PY = os.path.join(HERE, "nunif", "venv", "bin", "python")
+PY = os.environ.get("STYLIZE_PYTHON") or (_VENV_PY if os.path.exists(_VENV_PY) else sys.executable)
+DATA_DIR = os.environ.get("DATA_DIR", HERE)          # mount a volume here in containers
+UPLOADS = os.path.join(DATA_DIR, "uploads")
+OUTPUTS = os.path.join(DATA_DIR, "outputs")
+JOBS_FILE = os.path.join(DATA_DIR, "jobs.json")
 WEB = os.path.join(HERE, "web")
+os.environ.setdefault("STYLIZE_CACHE_DIR", os.path.join(DATA_DIR, ".stylize_cache"))  # inherited by stylize.py
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "").strip()  # empty = no auth (local / tunnel use)
 for d in (UPLOADS, OUTPUTS):
     os.makedirs(d, exist_ok=True)
 
@@ -65,6 +70,49 @@ class Job:
 
 JOBS: Dict[str, Job] = {}
 app = FastAPI(title="3dvid studio")
+
+
+def save_jobs():
+    """Persist job history so it survives restarts (in-memory alone is lost on redeploy)."""
+    try:
+        tmp = JOBS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump([j.public() for j in JOBS.values()], f)
+        os.replace(tmp, JOBS_FILE)
+    except Exception:
+        pass
+
+
+def load_jobs():
+    if not os.path.exists(JOBS_FILE):
+        return
+    try:
+        for d in json.load(open(JOBS_FILE)):
+            j = Job(id=d["id"], kind=d["kind"], label=d["label"], status=d["status"],
+                    stage=d.get("stage", ""), percent=d.get("percent", 0.0),
+                    message=d.get("message", ""), outputs=d.get("outputs", []), log=d.get("log", []))
+            j.started = time.time() - d.get("elapsed", 0); j.ended = time.time()
+            if j.status in ("running", "queued"):          # process died with the old server
+                j.status, j.message = "error", "server restarted during render"
+            JOBS[j.id] = j
+    except Exception:
+        pass
+
+
+load_jobs()
+
+
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    """Bearer-token gate for everything except the page itself and /api/health.
+    Media URLs are loaded by <video>/<a> which cannot set headers, so ?token= is accepted too."""
+    if AUTH_TOKEN and (request.url.path.startswith("/api/") or request.url.path.startswith("/media/")) \
+       and request.url.path != "/api/health":
+        auth = request.headers.get("authorization", "")
+        supplied = auth[7:].strip() if auth.lower().startswith("bearer ") else request.query_params.get("token", "")
+        if supplied != AUTH_TOKEN:
+            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 def _safe_name(name: str) -> str:
@@ -196,20 +244,24 @@ async def _run(job: Job, cmd, expected, cwd):
         except Exception:
             pass
         job.status, job.ended = "cancelled", time.time()
+        save_jobs()
         raise
 
     job.ended = time.time()
     if rc != 0:
         job.status, job.message = "error", f"exit {rc}: " + (job.log[-1] if job.log else "")
+        save_jobs()
         return
     found = [os.path.basename(p) for p in expected if os.path.exists(p)]
     if not found:
         job.status, job.message = "error", "process finished but produced no output file"
+        save_jobs()
         return
     job.status, job.percent, job.stage = "done", 100.0, ""
     job.outputs = [{"name": n, "mb": round(os.path.getsize(os.path.join(OUTPUTS, n)) / 1e6, 2)}
                    for n in found]
     job.message = "  ".join(f"{o['name']} {o['mb']} MB" for o in job.outputs)
+    save_jobs()
 
 
 @app.post("/api/render")
@@ -262,6 +314,7 @@ async def render(
     label = (f"{effect} / {bg} / {layout}" if kind == "stylize" else f"3D {sbs_format}")
     job = Job(id=uuid.uuid4().hex[:12], kind=kind, label=label)
     JOBS[job.id] = job
+    save_jobs()
     cwd = HERE if kind == "stylize" else os.path.join(HERE, "nunif")
     job._task = asyncio.create_task(_run(job, cmd, expected, cwd))   # noqa
     return {"job": job.id}
@@ -298,11 +351,18 @@ def media(name: str):
 def health():
     import torch
     return {"cuda": torch.cuda.is_available(), "torch": torch.__version__,
-            "note": "CPU-only: expect ~8 min per 30s stylise render"}
+            "auth": bool(AUTH_TOKEN), "cpus": os.cpu_count(),
+            "note": "CPU-only: expect ~8 min per 30s stylise render on 32 cores"}
 
 
 if __name__ == "__main__":
     import uvicorn
-    print("\n  3dvid studio -> http://localhost:8000")
-    print("  remote? on your laptop:  ssh -L 8000:localhost:8000 qm-personal\n")
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    print(f"\n  3dvid studio -> http://{host}:{port}   auth={'on' if AUTH_TOKEN else 'OFF'}  data={DATA_DIR}")
+    if host == "127.0.0.1":
+        print(f"  remote? on your laptop:  ssh -L {port}:localhost:{port} qm-personal")
+    elif not AUTH_TOKEN:
+        print("  WARNING: bound to a non-loopback address with no AUTH_TOKEN set")
+    print()
+    uvicorn.run(app, host=host, port=port, log_level="warning")

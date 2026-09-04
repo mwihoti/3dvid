@@ -186,6 +186,22 @@ video{width:100%;border-radius:10px;margin-top:11px;background:#000;display:bloc
 
 <script>
 const $ = s => document.querySelector(s);
+
+// ---- auth (only enforced when the server has AUTH_TOKEN set)
+let TOKEN = localStorage.getItem('token') || '';
+async function api(url, opts = {}){
+  opts.headers = Object.assign({}, opts.headers || {}, TOKEN ? {Authorization: 'Bearer ' + TOKEN} : {});
+  let r = await fetch(url, opts);
+  if(r.status === 401){
+    const t = prompt('This server needs an access token:');
+    if(t === null) throw new Error('unauthorized');
+    TOKEN = t.trim(); localStorage.setItem('token', TOKEN);
+    opts.headers.Authorization = 'Bearer ' + TOKEN;
+    r = await fetch(url, opts);
+  }
+  return r;
+}
+const media = name => `/media/${name}` + (TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : '');
 const pick = {kind:'stylize', effect:'voxel', bg:'plasma', layout:'wide', face_mode:'off', sbs_format:'half-sbs'};
 
 // segmented buttons
@@ -218,7 +234,7 @@ async function upload(f){
   drop.innerHTML = `Uploading <b>${f.name}</b> …`;
   const fd = new FormData(); fd.append('file', f);
   try{
-    const r = await fetch('/api/upload', {method:'POST', body:fd});
+    const r = await api('/api/upload', {method:'POST', body:fd});
     const j = await r.json();
     if(!r.ok) throw new Error(j.detail || 'upload failed');
     drop.innerHTML = `<b>${j.name}</b> · ${j.mb} MB · ${j.w}×${j.h} · ${j.duration}s<br>drop another to replace`;
@@ -227,7 +243,7 @@ async function upload(f){
 }
 
 async function loadVideos(sel){
-  const list = await (await fetch('/api/videos')).json();
+  const list = await (await api('/api/videos')).json();
   const s = $('#video');
   s.innerHTML = list.map(v => `<option value="${v.name}">${v.name} — ${v.mb} MB</option>`).join('')
              || '<option value="">no clips uploaded</option>';
@@ -256,7 +272,7 @@ $('#go').onclick = async () => {
   }
   $('#go').disabled = true;
   try{
-    const r = await fetch('/api/render', {method:'POST', body:fd});
+    const r = await api('/api/render', {method:'POST', body:fd});
     const j = await r.json();
     if(!r.ok) throw new Error(j.detail || 'render failed to start');
     poll();
@@ -271,9 +287,9 @@ function render(jobs){
   el.innerHTML = jobs.map(j => {
     const pct = Math.min(100, Math.round(j.percent));
     const players = (j.outputs||[]).filter(o => o.name.endsWith('.mp4'))
-      .map(o => `<video controls preload="metadata" src="/media/${o.name}"></video>`).join('');
+      .map(o => `<video controls preload="metadata" src="${media(o.name)}"></video>`).join('');
     const dl = (j.outputs||[]).map(o =>
-      `<a href="/media/${o.name}" download>${o.name.split('.').pop().toUpperCase()} · ${o.mb} MB</a>`).join('');
+      `<a href="${media(o.name)}" download>${o.name.split('.').pop().toUpperCase()} · ${o.mb} MB</a>`).join('');
     return `<div class="job ${j.status}">
       <div class="job-top">
         <div><b>${j.label}</b><div class="meta">${j.kind} · ${j.elapsed}s${j.stage?' · '+j.stage:''}</div></div>
@@ -291,11 +307,11 @@ function render(jobs){
   }).join('');
 }
 
-window.cancelJob = async id => { await fetch(`/api/jobs/${id}/cancel`, {method:'POST'}); poll(); };
+window.cancelJob = async id => { await api(`/api/jobs/${id}/cancel`, {method:'POST'}); poll(); };
 
 let timer = null;
 async function poll(){
-  const jobs = await (await fetch('/api/jobs')).json();
+  const jobs = await (await api('/api/jobs')).json();
   render(jobs);
   const busy = jobs.some(j => j.status === 'running' || j.status === 'queued');
   clearTimeout(timer);
@@ -304,8 +320,8 @@ async function poll(){
 
 (async () => {
   await loadVideos();
-  const h = await (await fetch('/api/health')).json();
-  $('#hw').textContent = `torch ${h.torch} · ${h.cuda ? 'CUDA' : 'CPU-only'} · renders run on the server`;
+  const h = await (await api('/api/health')).json();
+  $('#hw').textContent = `torch ${h.torch} · ${h.cuda ? 'CUDA' : 'CPU-only'}${h.cpus ? ' · '+h.cpus+' cores' : ''} · ${h.auth ? 'token auth' : 'no auth'} · renders run on the server`;
   poll();
 })();
 </script>

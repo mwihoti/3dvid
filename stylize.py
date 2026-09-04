@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 NUNIF = os.path.join(HERE, "nunif")
 sys.path.insert(0, NUNIF)
 
-CACHE_DIR = os.path.join(HERE, ".stylize_cache")
+CACHE_DIR = os.environ.get("STYLIZE_CACHE_DIR", os.path.join(HERE, ".stylize_cache"))
 CACHE_SCALE = 0.5          # depth/mask cached at half res (uint8) to keep .npz sane
 DEPTH_MODEL = "Any_V2_S"   # same model convert3d.sh uses
 

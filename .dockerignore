@@ -1,0 +1,13 @@
+nunif/
+.git/
+.gitmodules
+.stylize_cache/
+uploads/
+outputs/
+.bak/
+*.mp4
+*.webm
+*.png
+*.log
+__pycache__/
+*_frames/

@@ -1,4 +1,6 @@
-# 3dvid studio - CPU image for IBM Cloud Code Engine (or any Docker host).
+# 3dvid studio - container image for IBM Cloud Code Engine, AWS EC2, or any Docker host.
+#   CPU:  docker build -t 3dvid .
+#   GPU:  docker build --build-arg TORCH_INDEX=cu128 -t 3dvid .   (run with --gpus all)
 # Model weights are baked in at build time so cold starts don't re-download.
 FROM python:3.11-slim
 
@@ -15,8 +17,11 @@ ARG NUNIF_COMMIT=d23721f
 RUN git clone --filter=blob:none https://github.com/nagadomi/nunif.git nunif \
     && cd nunif && git checkout -q ${NUNIF_COMMIT} && rm -rf .git
 
-# CPU torch matching nunif's pinned version, then nunif deps, then ours.
-RUN pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu \
+# torch matching nunif's pinned version (2.7.1). TORCH_INDEX=cpu (default) or cu128 for
+# NVIDIA GPUs - the CUDA wheels bundle their own runtime, so the slim base image is fine;
+# the host only needs the driver + nvidia-container-toolkit (docker run --gpus all).
+ARG TORCH_INDEX=cpu
+RUN pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/${TORCH_INDEX} \
     && pip install -r nunif/requirements.txt
 COPY requirements-stylize.txt .
 RUN pip install -r requirements-stylize.txt

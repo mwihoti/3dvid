@@ -29,6 +29,18 @@ JOBS_FILE = os.path.join(DATA_DIR, "jobs.json")
 WEB = os.path.join(HERE, "web")
 os.environ.setdefault("STYLIZE_CACHE_DIR", os.path.join(DATA_DIR, ".stylize_cache"))  # inherited by stylize.py
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "").strip()  # empty = no auth (local / tunnel use)
+
+
+def _has_cuda():
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
+HAS_CUDA = _has_cuda()
+GPU_FLAG = "0" if HAS_CUDA else "-1"           # passed to iw3 for the stereo pipeline
 for d in (UPLOADS, OUTPUTS):
     os.makedirs(d, exist_ok=True)
 
@@ -196,7 +208,7 @@ def _build_cmd(kind, video, p):
 
     # half-SBS stereo via iw3, mirroring convert3d.sh's flags
     out = os.path.join(OUTPUTS, f"{os.path.splitext(video)[0]}_3d.mp4")
-    cmd = [PY, "-m", "iw3.cli", "--gpu", "-1", "--depth-model", "Any_V2_S",
+    cmd = [PY, "-m", "iw3.cli", "--gpu", GPU_FLAG, "--depth-model", "Any_V2_S",
            "--divergence", str(p.get("divergence", 2.0)), "--convergence", "0.5",
            f"--{p.get('sbs_format', 'half-sbs')}",
            "--max-output-height", str(p.get("max_height", 720)),
@@ -352,7 +364,8 @@ def health():
     import torch
     return {"cuda": torch.cuda.is_available(), "torch": torch.__version__,
             "auth": bool(AUTH_TOKEN), "cpus": os.cpu_count(),
-            "note": "CPU-only: expect ~8 min per 30s stylise render on 32 cores"}
+            "note": ("GPU: ~1 min per 30s stylise render" if HAS_CUDA
+                     else "CPU-only: ~8 min per 30s stylise render on 32 cores; scales with cores")}
 
 
 if __name__ == "__main__":

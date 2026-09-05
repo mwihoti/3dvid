@@ -101,7 +101,9 @@ def compute_depth(video, n_frames, ema_alpha, batch=8):
     from iw3.depth_model_factory import create_depth_model
 
     model = create_depth_model(DEPTH_MODEL)
-    model.load(gpu=-1)                       # CPU: torch here is +cpu, no CUDA
+    gpu = 0 if torch.cuda.is_available() else -1   # CUDA build + GPU host -> GPU, else CPU
+    model.load(gpu=gpu)
+    print(f"depth model on {'cuda:0' if gpu == 0 else 'cpu'}", flush=True)
     info = probe(video)
     ch, cw = int(info["h"] * CACHE_SCALE), int(info["w"] * CACHE_SCALE)
     out = np.zeros((n_frames, ch, cw), np.uint8)

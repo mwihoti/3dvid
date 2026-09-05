@@ -57,6 +57,27 @@ bucket at `/app/data`. First build takes 10–20 min (torch + weights).
 Render speed scales with cores: the ~8 min / 30 s figure is for 32 cores. A 4-vCPU container
 is roughly 8x slower. GPU in Code Engine is offered as *Fleet* (batch), not for applications.
 
+## Deploy on AWS EC2 (GPU, recommended)
+
+The only setup where the *web app itself* runs on a GPU. A `g4dn.xlarge` (T4) renders a 30 s
+clip in about a minute instead of ~8 on a 32-core CPU box, and costs ~$0.53/h on-demand —
+stop the instance between sessions.
+
+1. Launch **g4dn.xlarge**, AMI **Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu)** —
+   driver, Docker and nvidia-container-toolkit are preinstalled. 60 GB root disk.
+   Security group: SSH from your IP, and **port 8080 from your IP only**.
+2. On the instance:
+   ```bash
+   git clone https://<github-token>@github.com/mwihoti/3dvid.git && cd 3dvid
+   bash deploy/ec2.sh
+   ```
+   The script detects the GPU, builds the CUDA image (`TORCH_INDEX=cu128`), generates an
+   `AUTH_TOKEN` into `.env`, and starts the app with `./data` as persistent storage.
+3. Open `http://<instance-ip>:8080`, paste the token. Renders now report `depth model on cuda:0`.
+
+CPU-only hosts work with the same script (it falls back to `docker compose up`). `docker compose
+logs -f studio` for logs; `docker compose down` to stop; stop the EC2 instance to stop billing.
+
 ## Notes
 
 - CPU only: ~8 min per 30 s stylise render on 32 cores, plus a one-off depth+mask pass per clip.

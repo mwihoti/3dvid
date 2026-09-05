@@ -1,0 +1,14 @@
+# Overlay for NVIDIA hosts (needs nvidia-container-toolkit). Use together with docker-compose.yml.
+services:
+  studio:
+    build:
+      args:
+        TORCH_INDEX: cu128
+    image: 3dvid:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

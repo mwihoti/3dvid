@@ -12,6 +12,7 @@ outputs/
 .stylize_cache/
 *_frames/
 serve.log
+tunnel.log
 # python
 __pycache__/
 *.pyc

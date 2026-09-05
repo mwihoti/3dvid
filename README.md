@@ -78,6 +78,21 @@ stop the instance between sessions.
 CPU-only hosts work with the same script (it falls back to `docker compose up`). `docker compose
 logs -f studio` for logs; `docker compose down` to stop; stop the EC2 instance to stop billing.
 
+## Public access from a box with no inbound network
+
+The studio can be reached on a public HTTPS URL without opening any port, via a Cloudflare
+quick tunnel (no account needed). The URL is random and lives only while the tunnel runs.
+
+```bash
+set -a; . ./.env; set +a          # AUTH_TOKEN must be set - the script refuses otherwise
+./nunif/venv/bin/python serve.py & # or run it in tmux
+bash deploy/tunnel.sh              # prints the https://...trycloudflare.com URL + the token
+```
+
+Current public URL: _(run `deploy/tunnel.sh` and paste the URL here; it changes on every restart)_
+
+Anyone with the URL still needs the token, but treat the URL as semi-private all the same.
+
 ## Notes
 
 - CPU only: ~8 min per 30 s stylise render on 32 cores, plus a one-off depth+mask pass per clip.

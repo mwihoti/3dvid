@@ -89,7 +89,7 @@ set -a; . ./.env; set +a          # AUTH_TOKEN must be set - the script refuses 
 bash deploy/tunnel.sh              # prints the https://...trycloudflare.com URL + the token
 ```
 
-Current public URL: _(run `deploy/tunnel.sh` and paste the URL here; it changes on every restart)_
+Current public URL: https://italia-tiger-one-boundaries.trycloudflare.com _(quick tunnel — changes whenever `deploy/start.sh` is re-run)_
 
 Anyone with the URL still needs the token, but treat the URL as semi-private all the same.
 

@@ -16,9 +16,9 @@ if ! curl -s --max-time 3 "http://localhost:$PORT/api/health" | grep -q '"auth":
   echo "refusing: server on :$PORT is not running with AUTH_TOKEN set (start it with: set -a; . ./.env; set +a; python serve.py)"; exit 1
 fi
 : > tunnel.log
-"$BIN" tunnel --url "http://localhost:$PORT" --no-autoupdate >> tunnel.log 2>&1 &
+"$BIN" tunnel --url "http://localhost:$PORT" --no-autoupdate --protocol http2 >> tunnel.log 2>&1 &
 for _ in $(seq 1 30); do
-  url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
+  url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1 || true)
   [ -n "$url" ] && break; sleep 1
 done
 echo "public URL: ${url:-<none - see tunnel.log>}"

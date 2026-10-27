@@ -11,3 +11,6 @@ outputs/
 *.log
 __pycache__/
 *_frames/
+.env
+*.env
+aws-launch.sh

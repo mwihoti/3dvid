@@ -95,6 +95,22 @@ $('#startBtn').onclick = () => startCamera().then(() => {
 
 // ---- studio (only when this page is served by serve.py, not as a static site)
 export const studio = { available: false };
+
+// same bearer-token handling as the studio page (shared localStorage key)
+let TOKEN = localStorage.getItem('token') || '';
+async function api(path, opts = {}) {
+  const url = new URL(path, location.href);
+  opts.headers = { ...(opts.headers || {}), ...(TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}) };
+  let r = await fetch(url, opts);
+  if (r.status === 401) {
+    const t = prompt('The studio needs its access token:');
+    if (t === null) throw new Error('no token');
+    TOKEN = t.trim(); localStorage.setItem('token', TOKEN);
+    opts.headers.Authorization = 'Bearer ' + TOKEN;
+    r = await fetch(url, opts);
+  }
+  return r;
+}
 async function detectStudio() {
   try {
     const r = await fetch(new URL('../api/health', location.href));
@@ -229,9 +245,46 @@ function showResult(res) {
   $('#dlLink').download = res.name;
   // on a desktop "Save" already downloads; the plain link is the phone's alternative to sharing
   $('#dlLink').classList.toggle('hide', !matchMedia('(pointer: coarse)').matches);
-  $('#hqStatus').textContent = '';
+  $('#hqStatus').textContent = res.still || res.rawBlob || !studio.available ? ''
+    : 'Tip: turn on "Also keep the raw take" to render the exact version in the studio.';
+  $('#hqBtn').classList.toggle('hide', !res.rawBlob);
+  $('#hqBtn').disabled = false;
   $('#sheet').classList.remove('hide');
 }
+
+// upload the untouched camera take and start the same look in the studio, where
+// the real depth model and rembg replace the live approximations
+$('#hqBtn').onclick = async () => {
+  const btn = $('#hqBtn'), status = $('#hqStatus');
+  btn.disabled = true;
+  try {
+    status.textContent = 'Uploading the raw take…';
+    const fd = new FormData();
+    fd.append('file', new File([result.rawBlob], `camera-${stamp()}.${extFor(result.rawBlob.type)}`));
+    fd.append('source', 'camera');
+    let r = await api('../api/upload', { method: 'POST', body: fd });
+    const up = await r.json();
+    if (!r.ok) throw new Error(up.detail || 'upload failed');
+
+    const job = new FormData();
+    Object.entries({
+      video: up.name, kind: 'stylize', effect: settings.effect, bg: settings.bg, layout: settings.layout,
+      face_mode: settings.face, bands: settings.bands, min_cell: settings.minCell, max_cell: settings.maxCell,
+      preview: 0, keep_audio: true, chromatic: settings.chroma, grain: settings.grain,
+    }).forEach(([k, v]) => job.append(k, v));
+    r = await api('../api/render', { method: 'POST', body: job });
+    if (r.status === 409) {
+      status.innerHTML = `Uploaded as <b>${up.name}</b>. The studio is busy with another render; start this one from the <a href="../">studio</a>.`;
+      return;
+    }
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'render failed to start');
+    status.innerHTML = `Rendering <b>${up.name}</b> in the studio - follow it on the <a href="../">studio page</a>.`;
+  } catch (e) {
+    status.textContent = 'Studio render failed: ' + e.message;
+    btn.disabled = false;
+  }
+};
 $('#saveBtn').onclick = async () => {
   const how = await saveToDevice(result.blob, result.name);
   $('#hqStatus').textContent = how === 'shared' ? 'Saved.' : how === 'downloaded' ? `Downloaded ${result.name}` : '';

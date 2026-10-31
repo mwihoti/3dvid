@@ -20,8 +20,11 @@ cd nunif && python3 -m venv venv && ./venv/bin/pip install -r requirements-torch
 ## Use
 
 ```bash
-# single frame for tuning (fast once depth/mask are cached)
+# single frame for tuning - one depth + one mask inference, back in seconds
 ./nunif/venv/bin/python stylize.py clip.mp4 --frame 120 --effect voxel --bg plasma --layout wide
+
+# a photo is just a one-frame render (jpg / png / webp)
+./nunif/venv/bin/python stylize.py headshot.jpg --effect voxel --bg plasma --layout square
 
 # 3 s preview, face kept clear down to the collar, sharpened for soft footage
 ./nunif/venv/bin/python stylize.py clip.mp4 --preview 3 --effect voxel --face-clear --sharpen 0.6 --bg plasma --layout square
@@ -33,7 +36,7 @@ cd nunif && python3 -m venv venv && ./venv/bin/pip install -r requirements-torch
 ./nunif/venv/bin/python serve.py
 ```
 
-Depth and person masks are cached in `.stylize_cache/` per clip, so re-renders skip both model passes. Rotated phone clips are handled (display dimensions are used, not stored ones).
+Depth and person masks are cached in `.stylize_cache/` per clip, so re-renders skip both model passes. A still (`--frame N`, or an image input) reuses that cache when it covers the frame and otherwise infers just that one frame into its own cache entry — it never overwrites the full-clip cache. Rotated phone clips are handled (display dimensions are used, not stored ones).
 
 ## Deploy (Docker / IBM Cloud Code Engine)
 

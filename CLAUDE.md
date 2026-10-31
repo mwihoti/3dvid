@@ -27,6 +27,7 @@ Render (always through the nunif venv python):
 
 ```bash
 ./nunif/venv/bin/python stylize.py clip.mp4 --frame 120 --effect voxel --bg plasma   # one PNG, fastest iteration
+./nunif/venv/bin/python stylize.py photo.jpg --effect voxel --bg plasma              # a still renders as one frame
 ./nunif/venv/bin/python stylize.py clip.mp4 --preview 3 --effect contour --face-clear # first 3 s
 ./nunif/venv/bin/python stylize.py clip.mp4 --effect voxel --bg grid --layout wide    # full render
 ./convert3d.sh clip.mp4 [start] [end]                                                 # half-SBS 3D
@@ -43,7 +44,9 @@ Three layers, deliberately decoupled by process boundaries:
 
 1. **`nunif/` (vendored, do not modify)** provides iw3: the Depth-Anything-V2-Small depth model and the stereo synthesis CLI. `stylize.py` imports it (`sys.path.insert(0, NUNIF)`); `convert3d.sh` and `serve.py` shell out to `python -m iw3.cli`. Model weights download on first use into `nunif/iw3/pretrained_models/hub/`.
 
-2. **`stylize.py`** is a self-contained per-frame pipeline: `probe` → `read_frames` (raw RGB over an ffmpeg pipe) → `get_cached` (depth via iw3 with EMA smoothing + person mask via rembg `u2net_human_seg`, both cached as half-res uint8 `.npz` in `.stylize_cache/` keyed by file hash + frame count + EMA) → effect (`voxel_effect` / `contour_effect`) → `compose` (procedural `bg_*`, `layout_dims`, optional `face_protect` which auto-detects the neck boundary) → `encode` (frames dir → H.264 + WebM via ffmpeg, audio passthrough). The cache means model changes need `--refresh-cache`; effect/background/layout changes do not.
+2. **`stylize.py`** is a self-contained per-frame pipeline: `probe` → `read_frames` (raw RGB over an ffmpeg pipe) → `get_cached` (depth via iw3 with EMA smoothing + person mask via rembg `u2net_human_seg`, both cached as half-res uint8 `.npz` in `.stylize_cache/` keyed by file hash + frame count + EMA) → `render_one` (effect `voxel_effect` / `contour_effect`, then `compose`: procedural `bg_*`, `layout_dims`, optional `face_protect` which auto-detects the neck boundary) → `encode` (frames dir → H.264 + WebM via ffmpeg, audio passthrough). The cache means model changes need `--refresh-cache`; effect/background/layout changes do not.
+
+   There are **two entry paths into the same `render_one`**. A video goes through `get_cached` (two full model passes over the clip, then the render loop). A **still** — `--frame N`, or any image input — goes through `read_one_frame` + `get_cached_one`, which run exactly **one** depth and one mask inference and return in seconds. Stills reuse the full-clip `dm_<key>.npz` when it already covers the frame, and otherwise write a *separate* `one_<key>_f<N>.npz`; they must never write `dm_`, since a 1-frame array there would silently discard an existing full-clip pass and cost the next render another 8 minutes.
 
 3. **`serve.py` + `web/index.html`** is a FastAPI wrapper that builds the exact CLI command in `_build_cmd` (the two pipelines' flags live there and must mirror `convert3d.sh`), runs it as a subprocess in its own session, and scrapes tqdm/iw3 progress lines from stderr into weighted stage percentages (`STAGE_WEIGHTS`). One job at a time (409 otherwise). Jobs persist to `jobs.json` only so a restarted server can mark orphans as errors. The single HTML page keeps the bearer token in `localStorage`; `/api/*` and `/media/*` require it when `AUTH_TOKEN` is set, `/` and `/api/health` never do.
 
@@ -53,6 +56,8 @@ Everything mutable lives under `DATA_DIR` (`uploads/`, `outputs/`, `.stylize_cac
 
 - `probe()` returns **display** dimensions: phone clips carry a rotation tag and ffmpeg auto-rotates the pixel stream, so reshaping with stored width/height scrambles frames. Keep using display dims.
 - iw3 time args want `hh:mm:ss`, `mm:ss`, or integer seconds; a float like `2.0` is rejected (see the preview handling in `_build_cmd`).
+- Never pass `-ss 0` to ffmpeg for frame 0: on a JPEG (the `image2` demuxer) it emits **zero bytes and no error**, so every photo render fails silently. `read_one_frame` omits `-ss` entirely when `idx == 0`. PNG (`png_pipe`) and mp4 are unaffected.
+- `probe()` detects a still from the container `format_name` (`image2` / `*_pipe`), not from fps or duration: ffprobe invents a nominal `25/1` rate for a JPEG and omits `format.duration` for a PNG (which used to make `probe()` raise `KeyError`).
 - `convert3d.sh` hardcodes `cd /root/3dvid/nunif`; it is written for the qm-personal host and the container, not for arbitrary checkouts.
 - `.gitignore` excludes all media, caches, `venv/`, `.env`; `.dockerignore` additionally excludes `nunif/` because the Dockerfile clones it itself.
 

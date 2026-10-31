@@ -4,7 +4,15 @@
 #   fly secrets set AUTH_TOKEN=$(openssl rand -hex 24)
 #   fly deploy
 # Then open https://3dvid.fly.dev and paste the token.
-# Stop billing when idle:  fly machine stop     Start again:  fly machine start
+#
+# COST WARNING - read before changing [[vm]] or auto_stop_machines.
+# performance-8x/16GB bills ~$0.367/h = ~$264/month if left running. A machine
+# with auto_stop_machines="off" runs until stopped BY HAND; forgetting that once
+# cost $225. Volumes bill separately and keep billing while the machine is
+# stopped, so:
+#   stop compute : fly machine stop <id> -a 3dvid
+#   stop volume  : fly volumes list -a 3dvid && fly volumes destroy <id>
+#   stop all     : fly apps destroy 3dvid
 app = "3dvid"
 primary_region = "jnb"    # Johannesburg; fra or lhr also fine
 
@@ -18,13 +26,28 @@ primary_region = "jnb"    # Johannesburg; fra or lhr also fine
 [http_service]
   internal_port = 8080
   force_https = true
-  # keep the machine running while a render is in progress; stop it by hand when done
-  auto_stop_machines = "off"
+  # "suspend" stops the machine when idle and resumes it on the next request, so an
+  # idle studio costs nothing instead of ~$264/month.
+  #
+  # TRADE-OFF, know this before a long render: a render is a background subprocess,
+  # NOT an open HTTP request. What keeps the machine awake is the web UI polling
+  # /api/jobs every 1.2 s while a job runs - so a render survives only while a
+  # browser tab is open on it. Close the tab and the machine can suspend mid-render
+  # and lose the job. For an unattended multi-hour render, deliberately:
+  #     fly scale vm performance-8x -a 3dvid
+  #     fly config env set ... / set auto_stop_machines="off", deploy, render,
+  #     then REVERT both and stop the machine.
+  # That is the original reason this was "off" - it is cost-unsafe, not wrong.
+  auto_stop_machines = "suspend"
   auto_start_machines = true
   min_machines_running = 0
 
 [[vm]]
-  size = "performance-8x"   # 8 dedicated vCPU / 16 GB; performance-16x doubles both
+  # shared-cpu-4x/4GB (~$15/mo if it never sleeps, far less with auto-stop) is enough
+  # for stills and the web UI. Scale up ONLY for a long video render, and scale back
+  # down afterwards:  fly scale vm performance-8x -a 3dvid   (~$264/mo while running)
+  size = "shared-cpu-4x"
+  memory = "4gb"
 
 [mounts]
   source = "data"

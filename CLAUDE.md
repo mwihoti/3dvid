@@ -63,7 +63,7 @@ Everything mutable lives under `DATA_DIR` (`uploads/`, `outputs/`, `.stylize_cac
 
 ## Deployment targets
 
-- **Fly.io** (primary, stable URL): app `3dvid`, `fly.toml` in repo, `~/.fly/bin/flyctl deploy --remote-only --ha=false`. Auto-stop is off so renders survive idle; stop the machine by hand.
+- **Fly.io** (stable URL, but the expensive one): app `3dvid`, `fly.toml` in repo, `~/.fly/bin/flyctl deploy --remote-only --ha=false` (`--remote-only` builds on Fly, so it needs no local disk). **A `performance-8x` left running bills ~$264/month and once cost $225**, so `fly.toml` now defaults to `shared-cpu-4x` with `auto_stop_machines = "suspend"`. Stopping a machine does not stop volume billing. Read the cost warning at the top of `fly.toml` before changing either; a render only survives idle while a browser tab polls `/api/jobs`.
 - **qm-personal** (SSH host, free, 32+ cores): an on-demand microVM that stops when idle and loses all processes. `deploy/start.sh` restarts serve.py + a Cloudflare quick tunnel in tmux and writes the (random, per-restart) URL to `public_url.txt`; a `.bashrc` hook runs it on login. QUIC is blocked there, hence `--protocol http2` in `deploy/tunnel.sh`.
 - **AWS EC2 GPU** (`deploy/ec2.sh`, `aws-launch.sh`): blocked until the account's G-instance quota is raised; the CPU path of the same script works on any Ubuntu box with Docker.
 - Model download and CUDA-vs-CPU selection are automatic: `serve.py` passes `--gpu 0` to iw3 when torch sees CUDA, else `-1`; the Dockerfile picks the wheel index via `TORCH_INDEX`.

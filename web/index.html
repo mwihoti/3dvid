@@ -142,6 +142,11 @@ video{width:100%;border-radius:10px;margin-top:11px;background:#000;display:bloc
           <button data-v="square" aria-pressed="false">Square 1:1</button>
           <button data-v="native" aria-pressed="false">Native (source size)</button>
         </div>
+        <label>Position</label>
+        <div class="seg" id="subject_x">
+          <button data-v="" aria-pressed="true">Layout default</button>
+          <button data-v="0.5" aria-pressed="false">Centred</button>
+        </div>
         <div class="row3">
           <div><label>Bands</label><input type="number" id="bands" value="12" min="3" max="40"></div>
           <div><label>Min cell</label><input type="number" id="min_cell" value="8" min="4" max="40"></div>
@@ -205,7 +210,7 @@ async function api(url, opts = {}){
   return r;
 }
 const media = name => `/media/${name}` + (TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : '');
-const pick = {kind:'stylize', effect:'voxel', bg:'plasma', layout:'wide', face_mode:'off', sbs_format:'half-sbs'};
+const pick = {kind:'stylize', effect:'voxel', bg:'plasma', layout:'wide', face_mode:'off', sbs_format:'half-sbs', subject_x:''};
 
 // segmented buttons
 document.querySelectorAll('.seg').forEach(seg => {
@@ -265,6 +270,7 @@ $('#go').onclick = async () => {
   if(pick.kind === 'stylize'){
     fd.append('effect', pick.effect); fd.append('bg', pick.bg); fd.append('layout', pick.layout);
     fd.append('face_mode', pick.face_mode);
+    fd.append('subject_x', pick.subject_x);
     fd.append('face_pad', $('#face_pad').value || 0.05);
     fd.append('sharpen', $('#sharpen').value || 0);
     fd.append('face_to', $('#face_to').value);

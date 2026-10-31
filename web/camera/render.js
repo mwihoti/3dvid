@@ -39,7 +39,8 @@ export class Renderer {
     const gl = this.gl;
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return false;
-    const [CW, CH, ax] = layoutDims(settings.layout, settings.quality, vw, vh);
+    const [CW, CH, layoutAx] = layoutDims(settings.layout, settings.quality, vw, vh);
+    const ax = settings.subjectX === '' ? layoutAx : +settings.subjectX;   // '' = the layout's default
     if (this.canvas.width !== CW || this.canvas.height !== CH) {
       this.canvas.width = CW; this.canvas.height = CH;
     }

@@ -660,9 +660,11 @@ def chromatic(img, px=1.6):
 def grain(img, amt, rs):
     return np.clip(img.astype(np.float32) + rs.normal(0, amt, img.shape[:2])[..., None], 0, 255).astype(np.uint8)
 
-def compose(layer, alpha, bgname, layout, t, frame_idx, cab, grn, rs, src_bg=None):
+def compose(layer, alpha, bgname, layout, t, frame_idx, cab, grn, rs, src_bg=None, subject_x=None):
     sh, sw = layer.shape[:2]
     CW, CH, ax = layout_dims(layout, sw, sh)
+    if subject_x is not None:
+        ax = subject_x                     # override the layout's own subject position
     sc = CH / sh
     nw, nh = max(1, int(round(sw * sc))), CH
     lay = cv2.resize(layer, (nw, nh), interpolation=cv2.INTER_AREA)
@@ -771,7 +773,7 @@ def render_one(fr, d, m, palette, a, face_mode, t, idx, rs):
         # the untouched frame, so only the person carries the effect
         src_bg = full_fx if a.bg == "source" else (fr if a.bg == "filmed" else None)
         return compose(layer, m, a.bg, a.layout, t, idx,
-                       a.chromatic, a.grain, rs, src_bg=src_bg)
+                       a.chromatic, a.grain, rs, src_bg=src_bg, subject_x=a.subject_x)
 
 def main():
     ap = argparse.ArgumentParser(description="Stylise a talking-head clip into a portfolio intro.")
@@ -799,6 +801,10 @@ def main():
                     help="'auto' = clear down to just below the neck (detected from the "
                          "silhouette); or a number = fraction of the person's height, e.g. 0.55 for chin")
     ap.add_argument("--layout", choices=["portrait", "wide", "square", "native"], default="wide")
+    ap.add_argument("--subject-x", type=float, default=None,
+                    help="horizontal centre of the subject as a fraction of the canvas width; "
+                         "0.5 = centred. Default: 0.72 for wide (room for a title on the left), "
+                         "0.5 for the other layouts")
     ap.add_argument("--bands", type=int, default=12)
     ap.add_argument("--min-cell", type=int, default=8)
     ap.add_argument("--max-cell", type=int, default=24)
@@ -821,6 +827,8 @@ def main():
     ap.add_argument("--refresh-cache", action="store_true")
     ap.add_argument("-o", "--out", default=None)
     a = ap.parse_args()
+    if a.subject_x is not None and not 0.0 <= a.subject_x <= 1.0:
+        ap.error("--subject-x must be between 0 and 1 (0.5 = centred)")
 
     face_mode = a.face_mode or ("clear" if a.face_clear else "off")
     info = probe(a.input)

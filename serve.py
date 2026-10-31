@@ -209,7 +209,8 @@ def _build_cmd(kind, video, p):
     if kind == "stylize":
         _fm = p.get("face_mode", "off")
         stem = f"{os.path.splitext(video)[0]}_{p['effect']}_{p['bg']}_{p['layout']}" \
-               + ("" if _fm == "off" else f"_face{_fm}")
+               + ("" if _fm == "off" else f"_face{_fm}") \
+               + ("" if p.get("subject_x") is None else f"_x{p['subject_x']:g}")
         base = os.path.join(OUTPUTS, stem)
         cmd = [PY, os.path.join(HERE, "stylize.py"), src,
                "--effect", p["effect"], "--bg", p["bg"], "--layout", p["layout"],
@@ -224,6 +225,8 @@ def _build_cmd(kind, video, p):
             cmd += ["--face-mode", p["face_mode"],
                     "--face-frac", "auto" if p.get("face_to", "neck") == "neck" else "0.55",
                     "--face-pad", str(p.get("face_pad", 0.05))]
+        if p.get("subject_x") is not None:
+            cmd += ["--subject-x", f"{p['subject_x']:g}"]
         if p.get("sharpen"):
             cmd += ["--sharpen", str(p["sharpen"])]
         if p.get("chromatic"):
@@ -320,6 +323,7 @@ async def render(
     face_pad: float = Form(0.05),
     sharpen: float = Form(0),
     face_to: str = Form("neck"),
+    subject_x: str = Form(""),          # "" = the layout's default position
     chromatic: bool = Form(False),
     grain: float = Form(0),
     divergence: float = Form(2.0),
@@ -337,6 +341,12 @@ async def render(
        or bg not in ("plasma", "grid", "dark", "source", "filmed") \
        or layout not in ("portrait", "wide", "square", "native"):
         raise HTTPException(400, "bad effect/bg/layout")
+    try:
+        sx = float(subject_x) if subject_x.strip() else None
+    except ValueError:
+        raise HTTPException(400, "subject_x must be a number between 0 and 1")
+    if sx is not None and not 0.0 <= sx <= 1.0:
+        raise HTTPException(400, "subject_x must be between 0 and 1")
     if sbs_format not in ("half-sbs", "tb", "half-tb", "anaglyph", "vr180"):
         raise HTTPException(400, "bad sbs format")
 
@@ -347,6 +357,7 @@ async def render(
              max_cell=max_cell, crf=crf, webm_crf=webm_crf, preview=preview,
              keep_audio=keep_audio, chromatic=chromatic, grain=grain,
              face_mode=face_mode, face_pad=face_pad, sharpen=sharpen, face_to=face_to,
+             subject_x=sx,
              divergence=divergence, sbs_format=sbs_format, max_height=max_height)
     cmd, expected = _build_cmd(kind, video, p)
     label = (f"{effect} / {bg} / {layout}" if kind == "stylize" else f"3D {sbs_format}")

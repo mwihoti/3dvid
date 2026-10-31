@@ -8,7 +8,7 @@ const $ = s => document.querySelector(s);
 
 // ---- settings (mirrors the studio's stylize.py options where they exist)
 export const settings = {
-  effect: 'voxel', bg: 'plasma', face: 'off', layout: 'wide', quality: '720',
+  effect: 'voxel', bg: 'plasma', face: 'off', layout: 'wide', quality: '720', subjectX: '',
   bands: 12, minCell: 8, maxCell: 24, grain: 0, mirror: true, chroma: false, keepRaw: false,
 };
 
@@ -269,7 +269,7 @@ $('#hqBtn').onclick = async () => {
     const job = new FormData();
     Object.entries({
       video: up.name, kind: 'stylize', effect: settings.effect, bg: settings.bg, layout: settings.layout,
-      face_mode: settings.face, bands: settings.bands, min_cell: settings.minCell, max_cell: settings.maxCell,
+      face_mode: settings.face, subject_x: settings.subjectX, bands: settings.bands, min_cell: settings.minCell, max_cell: settings.maxCell,
       preview: 0, keep_audio: true, chromatic: settings.chroma, grain: settings.grain,
     }).forEach(([k, v]) => job.append(k, v));
     r = await api('../api/render', { method: 'POST', body: job });

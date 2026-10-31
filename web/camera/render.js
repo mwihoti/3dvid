@@ -4,6 +4,7 @@ import * as S from './shaders.js';
 
 // same canvases as stylize.py's LAYOUTS: (width, height, subject centre as a fraction of width)
 const LAYOUTS = { wide: [1920, 1080, 0.72], portrait: [1080, 1920, 0.50], square: [1080, 1080, 0.50] };
+const BG = { plasma: 0, grid: 1, dark: 2, filmed: 3, source: 4 };
 
 export function layoutDims(layout, quality, vw, vh) {
   if (layout === 'native') return [vw - (vw % 2), vh - (vh % 2), 0.5];
@@ -24,8 +25,8 @@ export class Renderer {
     this.comp = new Target(gl);
   }
 
-  // seg: a Segmenter (or null while it loads)
-  frame({ video, settings, seg }) {
+  // seg: a Segmenter (or null while it loads); t: seconds, drives the animated backgrounds
+  frame({ video, settings, seg, t }) {
     const gl = this.gl;
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return false;
@@ -38,11 +39,18 @@ export class Renderer {
     const hasMask = !!seg?.mask;
     if (hasMask) uploadR8(gl, this.mask, seg.w, seg.h, seg.mask, true);
 
-    const sc = CH / vh, nw = vw * sc;
+    const sc = CH / vh, nw = vw * sc, ox = CW * ax - nw / 2;
+    const k = Math.min(CW, CH) / 1080;
+    // head in canvas px; without a person, head_bbox's fallback (centre, upper third)
+    const st = seg?.stats?.present ? seg.stats : { headX: 0.5, headY: 0.35, headW: 0.4 };
+    const hx = ox + (settings.mirror ? 1 - st.headX : st.headX) * nw;
+    const head = [hx, st.headY * CH, Math.max(st.headW * nw, 40 * k)];
+
     this.composite.use()
       .tex('uVideo', this.video).tex('uMask', this.mask).i('uHasMask', hasMask ? 1 : 0)
       .i('uMirror', settings.mirror ? 1 : 0)
-      .f('uCanvas', CW, CH).f('uSrc', vw, vh).f('uSc', sc).f('uOx', CW * ax - nw / 2)
+      .f('uCanvas', CW, CH).f('uSrc', vw, vh).f('uSc', sc).f('uOx', ox)
+      .i('uBg', BG[settings.bg]).f('uHead', ...head).f('uK', k).f('uTime', t)
       .draw(this.comp);
 
     this.output.use().tex('uComp', this.comp.tex).f('uCanvas', CW, CH).draw(null);

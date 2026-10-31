@@ -107,6 +107,7 @@ async function detectStudio() {
 
 // ---- render loop: one styled frame per camera frame
 let renderer = null, seg = null, loopId = 0;
+const t0 = performance.now();
 const fps = { n: 0, since: performance.now(), value: 0 };
 const segCost = { every: 1, n: 0, ms: 0 };
 
@@ -124,7 +125,7 @@ function segment() {
 function tick(id) {
   if (id !== loopId) return;                       // a newer loop replaced this one
   segment();
-  if (renderer.frame({ video: cam, settings, seg })) {
+  if (renderer.frame({ video: cam, settings, seg, t: (performance.now() - t0) / 1000 })) {
     fps.n++;
     const now = performance.now();
     if (now - fps.since >= 1000) {

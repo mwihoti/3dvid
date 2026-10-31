@@ -51,14 +51,22 @@ def probe(path):
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
          "stream=width,height,r_frame_rate,nb_frames:stream_tags=rotate"
-         ":stream_side_data=rotation:format=duration", "-of", "json", path],
+         ":stream_side_data=rotation:format=duration,format_name", "-of", "json", path],
         capture_output=True, text=True, check=True).stdout
     d = json.loads(out)
     s = d["streams"][0]
+    fmt = d.get("format", {})
     num, den = s["r_frame_rate"].split("/")
-    fps = float(num) / float(den)
-    dur = float(d["format"]["duration"])
-    n = int(s.get("nb_frames") or round(dur * fps))
+    fps = float(num) / float(den) if float(den) else 0.0
+    # a still has no real duration or rate: ffprobe reports a nominal 25/1 for a
+    # JPEG and omits format.duration entirely for a PNG, so trust the container
+    # name instead - image2 / *_pipe is a single picture, not a clip.
+    fname = fmt.get("format_name", "")
+    is_image = fname in ("image2", "image2pipe") or fname.endswith("_pipe")
+    dur = float(fmt.get("duration") or 0.0)
+    n = int(s.get("nb_frames") or (round(dur * fps) if fps else 1))
+    if is_image:
+        fps, n, dur = 1.0, 1, 0.0
     w, h = int(s["width"]), int(s["height"])
     rot = 0
     for sd in s.get("side_data_list", []) or []:
@@ -68,7 +76,7 @@ def probe(path):
         rot = int(float(s["tags"]["rotate"]))
     if abs(rot) % 180 == 90:
         w, h = h, w
-    return dict(w=w, h=h, fps=fps, n=n, dur=dur, rotation=rot)
+    return dict(w=w, h=h, fps=fps, n=n, dur=dur, rotation=rot, is_image=is_image)
 
 def read_frames(path, limit=None):
     """Yield RGB uint8 frames via ffmpeg rawvideo pipe."""

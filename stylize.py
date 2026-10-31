@@ -103,8 +103,7 @@ def cache_key(video):
     raw = f"v2|{os.path.abspath(video)}|{st.st_size}|{int(st.st_mtime)}|{CACHE_SCALE}|{DEPTH_MODEL}"
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
-def compute_depth(video, n_frames, ema_alpha, batch=8):
-    """iw3 Depth-Anything-V2 -> per-frame [0,1] (1 = nearest), EMA-smoothed."""
+def _depth_model():
     import torch
     from iw3.depth_model_factory import create_depth_model
 
@@ -112,6 +111,37 @@ def compute_depth(video, n_frames, ema_alpha, batch=8):
     gpu = 0 if torch.cuda.is_available() else -1   # CUDA build + GPU host -> GPU, else CPU
     model.load(gpu=gpu)
     print(f"depth model on {'cuda:0' if gpu == 0 else 'cpu'}", flush=True)
+    return model
+
+def _depth_batch(model, frames):
+    """frames -> raw per-frame depth maps, before normalisation/EMA."""
+    import torch
+    x = torch.stack([torch.from_numpy(f.copy()).permute(2, 0, 1).float() / 255. for f in frames])
+    with torch.inference_mode():
+        d = model.infer(x)
+    return d.squeeze(1).float().cpu().numpy()
+
+def _norm01(dd):
+    """Per-frame min/max stretch; 1.0 = nearest."""
+    lo, hi = float(dd.min()), float(dd.max())
+    return (dd - lo) / max(hi - lo, 1e-6)
+
+def _cache_dims(video):
+    info = probe(video)
+    return int(info["h"] * CACHE_SCALE), int(info["w"] * CACHE_SCALE)
+
+def _to_cache(a, ch, cw):
+    return np.clip(cv2.resize(a, (cw, ch), interpolation=cv2.INTER_AREA) * 255, 0, 255).astype(np.uint8)
+
+def _upsample(d_u8, m_u8, W, H, feather):
+    """Cached half-res uint8 depth/mask -> full-res float [0,1], mask feathered."""
+    d = cv2.resize(d_u8.astype(np.float32) / 255., (W, H), interpolation=cv2.INTER_LINEAR)
+    m = cv2.resize(m_u8.astype(np.float32) / 255., (W, H), interpolation=cv2.INTER_LINEAR)
+    return d, cv2.GaussianBlur(m, (feather, feather), 0)
+
+def compute_depth(video, n_frames, ema_alpha, batch=8):
+    """iw3 Depth-Anything-V2 -> per-frame [0,1] (1 = nearest), EMA-smoothed."""
+    model = _depth_model()
     info = probe(video)
     ch, cw = int(info["h"] * CACHE_SCALE), int(info["w"] * CACHE_SCALE)
     out = np.zeros((n_frames, ch, cw), np.uint8)
@@ -123,15 +153,10 @@ def compute_depth(video, n_frames, ema_alpha, batch=8):
         nonlocal idx, ema
         if not frames:
             return
-        x = torch.stack([torch.from_numpy(f.copy()).permute(2, 0, 1).float() / 255. for f in frames])
-        with torch.inference_mode():
-            d = model.infer(x)
-        d = d.squeeze(1).float().cpu().numpy()
-        for dd in d:
-            lo, hi = float(dd.min()), float(dd.max())
-            dn = (dd - lo) / max(hi - lo, 1e-6)          # 1.0 = nearest
+        for dd in _depth_batch(model, frames):
+            dn = _norm01(dd)
             ema = dn if ema is None else (ema_alpha * dn + (1 - ema_alpha) * ema)
-            out[idx] = np.clip(cv2.resize(ema, (cw, ch), interpolation=cv2.INTER_AREA) * 255, 0, 255).astype(np.uint8)
+            out[idx] = _to_cache(ema, ch, cw)
             idx += 1; pbar.update(1)
 
     for fr in read_frames(video, n_frames):
@@ -141,16 +166,22 @@ def compute_depth(video, n_frames, ema_alpha, batch=8):
     flush(buf); pbar.close()
     return out
 
-def compute_masks(video, n_frames, model_name="u2net_human_seg"):
-    from rembg import new_session, remove
+def _mask_session(model_name="u2net_human_seg"):
+    from rembg import new_session
+    return new_session(model_name)
+
+def _mask_one(sess, frame):
+    from rembg import remove
     from PIL import Image
-    sess = new_session(model_name)
+    return np.asarray(remove(Image.fromarray(frame), session=sess, only_mask=True))
+
+def compute_masks(video, n_frames, model_name="u2net_human_seg"):
+    sess = _mask_session(model_name)
     info = probe(video)
     ch, cw = int(info["h"] * CACHE_SCALE), int(info["w"] * CACHE_SCALE)
     out = np.zeros((n_frames, ch, cw), np.uint8)
     for i, fr in enumerate(tqdm(read_frames(video, n_frames), total=n_frames, desc="mask", unit="f")):
-        m = np.asarray(remove(Image.fromarray(fr), session=sess, only_mask=True))
-        out[i] = cv2.resize(m, (cw, ch), interpolation=cv2.INTER_AREA)
+        out[i] = cv2.resize(_mask_one(sess, fr), (cw, ch), interpolation=cv2.INTER_AREA)
     return out
 
 def get_cached(video, n_frames, ema_alpha, refresh=False):

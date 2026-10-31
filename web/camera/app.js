@@ -2,6 +2,7 @@
 import { Renderer } from './render.js';
 import { Segmenter } from './segment.js';
 import { buildPalette } from './palette.js';
+import { Recorder, saveToDevice, extFor, stamp } from './recorder.js';
 
 const $ = s => document.querySelector(s);
 
@@ -125,9 +126,9 @@ function segment() {
   if (!seg || !cam.videoWidth) return;
   // a slow device segments every other frame instead of dropping the whole frame rate
   if (segCost.n++ % segCost.every) return;
-  const t0 = performance.now();
-  seg.update(cam, t0);
-  segCost.ms = segCost.ms * 0.9 + (performance.now() - t0) * 0.1;
+  const start = performance.now();
+  seg.update(cam, start);
+  segCost.ms = segCost.ms * 0.9 + (performance.now() - start) * 0.1;
   segCost.every = segCost.ms > 22 ? 2 : 1;
   $('#hint').classList.toggle('hide', seg.stats.present);
 }
@@ -137,6 +138,8 @@ function tick(id) {
   segment();
   if (cam.videoWidth && (!palette || (!paletteHasPerson && seg?.stats?.present))) refreshPalette();
   if (palette && renderer.frame({ video: cam, settings, seg, palette, t: (performance.now() - t0) / 1000 })) {
+    if (snapPending) takeSnapshot();
+    if ($('#recBtn').disabled && !recording) { $('#recBtn').disabled = false; $('#snapBtn').disabled = false; }
     fps.n++;
     const now = performance.now();
     if (now - fps.since >= 1000) {
@@ -152,6 +155,93 @@ function schedule(id) {
   else requestAnimationFrame(() => tick(id));
 }
 function startLoop() { schedule(++loopId); }
+
+// ---- photo: read the canvas straight after a draw, while the drawing buffer is
+// still intact (it is not preserved between frames)
+let snapPending = false;
+$('#snapBtn').onclick = () => { snapPending = true; };
+function takeSnapshot() {
+  snapPending = false;
+  $('#out').toBlob(blob => blob && showResult({ blob, name: `3dvid-${settings.effect}-${stamp()}.png`, still: true }),
+                   'image/png');
+}
+
+// ---- recording
+const MAX_SECONDS = 600;
+let recording = null;      // { styled, raw, started, timer, lock }
+
+async function startRecording() {
+  const out = $('#out');
+  if (!out.captureStream) return alert('This browser cannot record a canvas.');
+  const mic = stream.getAudioTracks();
+  const styled = new Recorder(new MediaStream([...out.captureStream(30).getVideoTracks(), ...mic]),
+                              settings.quality === '1080' ? 12e6 : 6e6);
+  // the untouched camera, for an exact re-render in the studio with the real depth model
+  const raw = settings.keepRaw && studio.available ? new Recorder(stream, 8e6) : null;
+  styled.start(); raw?.start();
+  recording = { styled, raw, started: performance.now() };
+  recording.lock = await navigator.wakeLock?.request('screen').catch(() => null);   // keep the screen on
+  recording.timer = setInterval(() => {
+    const sec = (performance.now() - recording.started) / 1000;
+    $('#recTime').textContent = `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    if (sec >= MAX_SECONDS) stopRecording();
+  }, 250);
+  $('#recTime').textContent = '0:00';
+  $('#recBadge').classList.remove('hide');
+  $('#recBtn').classList.add('on');
+  // a new canvas size or camera mid-take would corrupt the file
+  document.querySelectorAll('#layout button, #quality button').forEach(b => { b.disabled = true; });
+  $('#flipBtn').disabled = true;
+}
+
+async function stopRecording() {
+  const r = recording;
+  if (!r) return;
+  recording = null;
+  clearInterval(r.timer);
+  r.lock?.release().catch(() => {});
+  $('#recBadge').classList.add('hide');
+  $('#recBtn').classList.remove('on');
+  document.querySelectorAll('#layout button, #quality button').forEach(b => { b.disabled = false; });
+  $('#flipBtn').disabled = false;
+  const seconds = (performance.now() - r.started) / 1000;
+  const [blob, rawBlob] = await Promise.all([r.styled.stop(), r.raw?.stop()]);
+  const ext = extFor(blob.type);
+  showResult({ blob, rawBlob, seconds, name: `3dvid-${settings.effect}-${settings.bg}-${stamp()}.${ext}` });
+}
+
+$('#recBtn').onclick = () => (recording ? stopRecording() : startRecording().catch(e => {
+  recording = null; alert('Could not start recording: ' + e.message);
+}));
+
+// ---- result sheet
+let result = null;
+function showResult(res) {
+  result = { ...res, url: URL.createObjectURL(res.blob) };
+  const take = $('#take'), still = $('#still');
+  take.classList.toggle('hide', !!res.still);
+  still.classList.toggle('hide', !res.still);
+  if (res.still) still.src = result.url; else { take.src = result.url; take.play().catch(() => {}); }
+  const mb = (res.blob.size / 1e6).toFixed(1);
+  $('#takeMeta').textContent = res.still ? `${$('#out').width}×${$('#out').height} PNG · ${mb} MB`
+    : `${res.seconds.toFixed(1)} s · ${$('#out').width}×${$('#out').height} · ${extFor(res.blob.type).toUpperCase()} · ${mb} MB`;
+  $('#dlLink').href = result.url;
+  $('#dlLink').download = res.name;
+  // on a desktop "Save" already downloads; the plain link is the phone's alternative to sharing
+  $('#dlLink').classList.toggle('hide', !matchMedia('(pointer: coarse)').matches);
+  $('#hqStatus').textContent = '';
+  $('#sheet').classList.remove('hide');
+}
+$('#saveBtn').onclick = async () => {
+  const how = await saveToDevice(result.blob, result.name);
+  $('#hqStatus').textContent = how === 'shared' ? 'Saved.' : how === 'downloaded' ? `Downloaded ${result.name}` : '';
+};
+$('#backBtn').onclick = () => {
+  $('#take').pause();
+  URL.revokeObjectURL(result.url);
+  result = null;
+  $('#sheet').classList.add('hide');
+};
 
 async function main() {
   detectStudio();

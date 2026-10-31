@@ -11,10 +11,24 @@ const float PI = 3.14159265;
 vec2 camUV(vec2 uv) { return uMirror ? vec2(1.0 - uv.x, uv.y) : uv; }
 `;
 
+// camera-sized: the stylised frame, in display (mirrored) space. Effects render the
+// whole frame like stylize.py's do; the composite decides where it shows.
+export const FX = COMMON + `
+uniform sampler2D uVideo;
+uniform sampler2D uMask;
+uniform vec2 uSrc;      // fx target px
+uniform int uEffect;    // 0 voxel, 1 contour, 2 both, 3 clean
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uSrc;
+  outColor = vec4(texture(uVideo, camUV(uv)).rgb, 1.0);
+}`;
+
 // canvas-sized: places the camera frame like compose() - scaled to the canvas
 // height, centred at uOx - and fills everything else with the background.
 export const COMPOSITE = COMMON + `
 uniform sampler2D uVideo;
+uniform sampler2D uFx;  // stylised frame, display space, mipmapped
 uniform sampler2D uMask;
 uniform bool uHasMask;  // false until the segmenter has loaded: show the whole frame
 uniform vec2 uCanvas;   // canvas px
@@ -22,7 +36,7 @@ uniform vec2 uSrc;      // camera px
 uniform float uSc;      // canvas px per camera px
 uniform float uOx;      // canvas x of the camera frame's left edge
 
-uniform int uBg;        // 0 plasma, 1 grid, 2 dark (3/4 filmed come with the filmed backgrounds)
+uniform int uBg;        // 0 plasma, 1 grid, 2 dark, 3 filmed, 4 filmed FX
 uniform vec3 uHead;     // head centre x, y and width, canvas px (for the plasma orb)
 uniform float uK;       // canvas scale vs the 1080-line layouts stylize.py renders
 uniform float uTime;
@@ -123,9 +137,34 @@ vec3 bgDark(vec2 P) {
   return vec3(5.0, 7.0, 15.0) / 255.0 * (0.35 + 1.9 * v);
 }
 
-vec3 background(vec2 P) {
+// compose(src_bg=...): a blurred, dimmed cover-fill of the frame, with the sharp
+// frame placed under the subject with the SAME transform, so the wall lines up.
+// fx = true ("Filmed FX") uses the stylised frame instead of the real one.
+// a single high mip level magnifies into visible blocks; nine taps spaced one
+// texel of that level apart turn it into a smooth wide blur (GaussianBlur sigma 18)
+vec3 wideBlur(sampler2D tex, vec2 uv, bool cam) {
+  const float LOD = 4.0;
+  vec2 step = exp2(LOD) / vec2(textureSize(tex, 0));
+  vec3 acc = vec3(0.0);
+  for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      vec2 q = uv + vec2(i, j) * step;
+      acc += textureLod(tex, cam ? camUV(q) : q, LOD).rgb;
+    }
+  return acc / 9.0;
+}
+
+vec3 bgFilmed(vec2 P, vec2 uv, bool inside, bool fx) {
+  if (inside) return fx ? texture(uFx, uv).rgb : texture(uVideo, camUV(uv)).rgb;
+  float cs = max(uCanvas.x / uSrc.x, uCanvas.y / uSrc.y);
+  vec2 cuv = (P - (uCanvas - uSrc * cs) * 0.5) / cs / uSrc;
+  return (fx ? wideBlur(uFx, cuv, false) : wideBlur(uVideo, cuv, true)) * 0.55;
+}
+
+vec3 background(vec2 P, vec2 uv, bool inside) {
   if (uBg == 0) return bgPlasma(P, uTime);
   if (uBg == 1) return bgGrid(P, uTime);
+  if (uBg == 3 || uBg == 4) return bgFilmed(P, uv, inside, uBg == 4);
   return bgDark(P);
 }
 
@@ -134,12 +173,12 @@ void main() {
   vec2 s = vec2((P.x - uOx) / uSc, P.y / uSc);    // camera px
   bool inside = s.x >= 0.0 && s.x < uSrc.x;
   vec2 uv = s / uSrc;
-  vec3 layer = texture(uVideo, camUV(uv)).rgb;
+  vec3 layer = texture(uFx, uv).rgb;
   // the mask is 256 px on its long side: bilinear upsampling + a narrow smoothstep
   // gives a clean edge without the halo a raw soft mask leaves at this scale
   float m = uHasMask ? smoothstep(0.25, 0.75, texture(uMask, camUV(uv)).r) : 1.0;
   float a = inside ? m : 0.0;
-  outColor = vec4(mix(background(P), layer, a), 1.0);
+  outColor = vec4(mix(background(P, uv, inside), layer, a), 1.0);
 }`;
 
 // composite target -> canvas: the one vertical flip, plus film-style finishing later

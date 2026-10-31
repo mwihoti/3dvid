@@ -1,5 +1,6 @@
 // 3dvid live camera: open the camera, style it in the browser, record, save on the device.
 import { Renderer } from './render.js';
+import { Segmenter } from './segment.js';
 
 const $ = s => document.querySelector(s);
 
@@ -105,12 +106,25 @@ async function detectStudio() {
 }
 
 // ---- render loop: one styled frame per camera frame
-let renderer = null, loopId = 0;
+let renderer = null, seg = null, loopId = 0;
 const fps = { n: 0, since: performance.now(), value: 0 };
+const segCost = { every: 1, n: 0, ms: 0 };
+
+function segment() {
+  if (!seg || !cam.videoWidth) return;
+  // a slow device segments every other frame instead of dropping the whole frame rate
+  if (segCost.n++ % segCost.every) return;
+  const t0 = performance.now();
+  seg.update(cam, t0);
+  segCost.ms = segCost.ms * 0.9 + (performance.now() - t0) * 0.1;
+  segCost.every = segCost.ms > 22 ? 2 : 1;
+  $('#hint').classList.toggle('hide', seg.stats.present);
+}
 
 function tick(id) {
   if (id !== loopId) return;                       // a newer loop replaced this one
-  if (renderer.frame({ video: cam, settings })) {
+  segment();
+  if (renderer.frame({ video: cam, settings, seg })) {
     fps.n++;
     const now = performance.now();
     if (now - fps.since >= 1000) {
@@ -144,5 +158,13 @@ async function main() {
   cam.classList.add('offscreen');
   $('#out').classList.remove('hide');
   startLoop();
+  setStatus('loading person model…');
+  try {
+    seg = await Segmenter.create();
+  } catch (e) {
+    // without a mask the effects still run on the whole frame
+    console.error('segmenter failed to load', e);
+    setStatus('person model unavailable - full-frame styles');
+  }
 }
 main();

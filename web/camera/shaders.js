@@ -15,6 +15,8 @@ vec2 camUV(vec2 uv) { return uMirror ? vec2(1.0 - uv.x, uv.y) : uv; }
 // height, centred at uOx - and fills everything else with the background.
 export const COMPOSITE = COMMON + `
 uniform sampler2D uVideo;
+uniform sampler2D uMask;
+uniform bool uHasMask;  // false until the segmenter has loaded: show the whole frame
 uniform vec2 uCanvas;   // canvas px
 uniform vec2 uSrc;      // camera px
 uniform float uSc;      // canvas px per camera px
@@ -30,7 +32,10 @@ void main() {
   bool inside = s.x >= 0.0 && s.x < uSrc.x;
   vec2 uv = s / uSrc;
   vec3 layer = texture(uVideo, camUV(uv)).rgb;
-  float a = inside ? 1.0 : 0.0;
+  // the mask is 256 px on its long side: bilinear upsampling + a narrow smoothstep
+  // gives a clean edge without the halo a raw soft mask leaves at this scale
+  float m = uHasMask ? smoothstep(0.25, 0.75, texture(uMask, camUV(uv)).r) : 1.0;
+  float a = inside ? m : 0.0;
   outColor = vec4(mix(background(P), layer, a), 1.0);
 }`;
 

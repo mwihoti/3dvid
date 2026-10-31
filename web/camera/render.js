@@ -1,5 +1,5 @@
 // Per-frame GPU pipeline: camera -> composite (layout + background) -> canvas.
-import { createGL, Pass, Target, texture, uploadImage } from './gl.js';
+import { createGL, Pass, Target, texture, uploadImage, uploadR8 } from './gl.js';
 import * as S from './shaders.js';
 
 // same canvases as stylize.py's LAYOUTS: (width, height, subject centre as a fraction of width)
@@ -20,10 +20,12 @@ export class Renderer {
     this.composite = new Pass(gl, S.COMPOSITE);
     this.output = new Pass(gl, S.OUTPUT);
     this.video = texture(gl, true);
+    this.mask = texture(gl, true);
     this.comp = new Target(gl);
   }
 
-  frame({ video, settings }) {
+  // seg: a Segmenter (or null while it loads)
+  frame({ video, settings, seg }) {
     const gl = this.gl;
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return false;
@@ -33,10 +35,12 @@ export class Renderer {
     }
     this.comp.resize(CW, CH);
     uploadImage(gl, this.video, video, true);
+    const hasMask = !!seg?.mask;
+    if (hasMask) uploadR8(gl, this.mask, seg.w, seg.h, seg.mask, true);
 
     const sc = CH / vh, nw = vw * sc;
     this.composite.use()
-      .tex('uVideo', this.video)
+      .tex('uVideo', this.video).tex('uMask', this.mask).i('uHasMask', hasMask ? 1 : 0)
       .i('uMirror', settings.mirror ? 1 : 0)
       .f('uCanvas', CW, CH).f('uSrc', vw, vh).f('uSc', sc).f('uOx', CW * ax - nw / 2)
       .draw(this.comp);

@@ -89,7 +89,10 @@ export class Renderer {
       .f('uFaceRows', st ? st.top : 0, st ? Math.min(1, st.cut + FACE_PAD * (st.bottom - st.top)) : 0)
       .draw(this.comp);
 
-    this.output.use().tex('uComp', this.comp.tex).f('uCanvas', CW, CH).draw(null);
+    this.output.use().tex('uComp', this.comp.tex).f('uCanvas', CW, CH)
+      .i('uChroma', settings.chroma ? 1 : 0).f('uGrain', settings.grain).f('uK', k)
+      .f('uSeed', (t * 997) % 1000)
+      .draw(null);
     return true;
   }
 }

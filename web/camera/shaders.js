@@ -319,11 +319,36 @@ void main() {
   outColor = vec4(mix(background(P, uv, inside), layer, a), 1.0);
 }`;
 
-// composite target -> canvas: the one vertical flip, plus film-style finishing later
+// composite target -> canvas: the one vertical flip, then compose()'s finishing:
+// chromatic aberration and film grain
 export const OUTPUT = COMMON + `
 uniform sampler2D uComp;
 uniform vec2 uCanvas;
+uniform bool uChroma;
+uniform float uGrain;   // sigma in 0..255 units, like --grain
+uniform float uK;       // canvas scale vs 1080 lines
+uniform float uSeed;    // per frame, so the grain moves
+
+float hash(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
 void main() {
   vec2 P = vec2(gl_FragCoord.x, uCanvas.y - gl_FragCoord.y);
-  outColor = vec4(texture(uComp, P / uCanvas).rgb, 1.0);
+  vec2 uv = P / uCanvas;
+  vec3 c = texture(uComp, uv).rgb;
+  if (uChroma) {
+    // chromatic(): red sampled 1.6 px to the left, blue 1.6 px to the right
+    vec2 off = vec2(1.6 * uK / uCanvas.x, 0.0);
+    c.r = texture(uComp, uv - off).r;
+    c.b = texture(uComp, uv + off).b;
+  }
+  if (uGrain > 0.0) {
+    // grain(): one Gaussian sample per pixel, the same on all channels (Box-Muller)
+    float u1 = max(hash(P + uSeed), 1e-6), u2 = hash(P.yx + uSeed * 1.7);
+    c += sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2) * uGrain / 255.0;
+  }
+  outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;

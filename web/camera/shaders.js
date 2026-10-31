@@ -161,6 +161,8 @@ uniform vec2 uCanvas;   // canvas px
 uniform vec2 uSrc;      // camera px
 uniform float uSc;      // canvas px per camera px
 uniform float uOx;      // canvas x of the camera frame's left edge
+uniform int uFace;      // 0 effect everywhere, 1 keep face clear, 2 face only
+uniform vec2 uFaceRows; // person top, collar cut (0..1, y down)
 
 uniform int uBg;        // 0 plasma, 1 grid, 2 dark, 3 filmed, 4 filmed FX
 uniform vec3 uHead;     // head centre x, y and width, canvas px (for the plasma orb)
@@ -300,6 +302,16 @@ void main() {
   bool inside = s.x >= 0.0 && s.x < uSrc.x;
   vec2 uv = s / uSrc;
   vec3 layer = texture(uFx, uv).rgb;
+  if (uFace != 0 && uHasMask) {
+    // face_protect: head + neck down to the collar, times the person mask, softened
+    // (its 61 px Gaussian is ~2.5% of the frame height)
+    const float SOFT = 0.025;
+    float fm = (1.0 - smoothstep(uFaceRows.y - SOFT, uFaceRows.y + SOFT, uv.y))
+             * smoothstep(uFaceRows.x - SOFT, uFaceRows.x, uv.y)
+             * textureLod(uMask, camUV(uv), 1.0).r;
+    if (uFace == 2) fm = 1.0 - fm;           // effect on the head, the rest stays real
+    layer = mix(layer, texture(uVideo, camUV(uv)).rgb, fm);
+  }
   // the mask is 256 px on its long side: bilinear upsampling + a narrow smoothstep
   // gives a clean edge without the halo a raw soft mask leaves at this scale
   float m = uHasMask ? smoothstep(0.25, 0.75, texture(uMask, camUV(uv)).r) : 1.0;

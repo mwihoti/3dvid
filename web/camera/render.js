@@ -6,6 +6,8 @@ import * as S from './shaders.js';
 const LAYOUTS = { wide: [1920, 1080, 0.72], portrait: [1080, 1920, 0.50], square: [1080, 1080, 0.50] };
 const BG = { plasma: 0, grid: 1, dark: 2, filmed: 3, source: 4 };
 const EFFECT = { voxel: 0, contour: 1, both: 2, clean: 3 };
+const FACE = { off: 0, clear: 1, only: 2 };
+const FACE_PAD = 0.05;       // the studio's default chin/beard slack, in person heights
 const FX_LONG_SIDE = 1280;   // effects run at camera resolution, capped for 1080p+ cameras
 
 export function layoutDims(layout, quality, vw, vh) {
@@ -82,6 +84,9 @@ export class Renderer {
       .i('uHasMask', hasMask ? 1 : 0).i('uMirror', settings.mirror ? 1 : 0)
       .f('uCanvas', CW, CH).f('uSrc', vw, vh).f('uSc', sc).f('uOx', ox)
       .i('uBg', BG[settings.bg]).f('uHead', ...head).f('uK', k).f('uTime', t)
+      // no person, or the clean effect: nothing to protect
+      .i('uFace', st && settings.effect !== 'clean' ? FACE[settings.face] : 0)
+      .f('uFaceRows', st ? st.top : 0, st ? Math.min(1, st.cut + FACE_PAD * (st.bottom - st.top)) : 0)
       .draw(this.comp);
 
     this.output.use().tex('uComp', this.comp.tex).f('uCanvas', CW, CH).draw(null);

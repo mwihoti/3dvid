@@ -11,18 +11,12 @@ const float PI = 3.14159265;
 vec2 camUV(vec2 uv) { return uMirror ? vec2(1.0 - uv.x, uv.y) : uv; }
 `;
 
-// camera-sized: the stylised frame, in display (mirrored) space. Effects render the
-// whole frame like stylize.py's do; the composite decides where it shows.
-export const FX = COMMON + `
+// shared by the passes that need the person mask and the stand-in depth
+const DEPTH = `
 uniform sampler2D uVideo;
 uniform sampler2D uMask;
 uniform bool uHasMask;
 uniform vec2 uSrc;      // fx target px
-uniform int uEffect;    // 0 voxel, 1 contour, 2 both, 3 clean
-uniform vec3 uPerson;   // top, face bottom (0..1, y down), present
-uniform vec3 uPal[24];  // build_palette's 24 colours
-uniform float uMinCell, uMaxCell, uTopCell, uCamPerFx;
-
 float maskAt(vec2 uv) { return uHasMask ? texture(uMask, camUV(uv)).r : 1.0; }
 
 // Stand-in for Depth-Anything: there is no depth model running live, so
@@ -39,6 +33,17 @@ float nearness(vec2 uv) {
   float lum = dot(textureLod(uVideo, cuv, 2.0).rgb, vec3(0.299, 0.587, 0.114));
   return smoothstep(0.30, 1.0, body) * 0.8 + 0.2 * lum;
 }
+
+`;
+
+// camera-sized: the stylised frame, in display (mirrored) space. Effects render the
+// whole frame like stylize.py's do; the composite decides where it shows.
+export const FX = COMMON + DEPTH + `
+uniform sampler2D uEdge;  // EDGES output: rgb = coloured band edges, a = raw rim
+uniform int uEffect;    // 0 voxel, 1 contour, 2 both, 3 clean
+uniform vec3 uPerson;   // top, face bottom (0..1, y down), present
+uniform vec3 uPal[24];  // build_palette's 24 colours
+uniform float uMinCell, uMaxCell, uTopCell, uCamPerFx;
 
 // face = person AND the top 30% of the person's vertical extent
 bool isFace(vec2 uv) {
@@ -87,10 +92,62 @@ vec3 voxel(vec2 pix) {
   return clamp(col * shade, 0.0, 1.0);
 }
 
+const vec3 NAVY = vec3(0x0a, 0x12, 0x30) / 255.0;
+const vec3 CYAN = vec3(0x39, 0xc6, 0xff) / 255.0;
+
+// contour_effect's second half: navy + anti-aliased edges + bloom + cyan rim
+vec3 contour(vec2 pix) {
+  vec2 t = pix / uSrc;
+  vec3 col = NAVY + textureLod(uEdge, t, 0.4).rgb;        // 0.4: a touch of the 3x3 AA blur
+  // GaussianBlur(edge, glow 9) * 0.55; mip 2 (a 4x4 average) is the same width of blur
+  col += textureLod(uEdge, t, 2.0).rgb * 0.55;
+  float rim = clamp(textureLod(uEdge, t, 2.5).a * 4.0, 0.0, 1.0);
+  col += CYAN * pow(rim, 1.5) * 1.4;
+  return clamp(col, 0.0, 1.0);
+}
+
 void main() {
   vec2 pix = gl_FragCoord.xy;
-  vec3 col = uEffect == 0 ? voxel(pix) : texture(uVideo, camUV(pix / uSrc)).rgb;
+  vec3 col;
+  if (uEffect == 0) col = voxel(pix);
+  else if (uEffect == 1) col = contour(pix);
+  else if (uEffect == 2) col = clamp(voxel(pix) * 0.45 + contour(pix) * 0.75, 0.0, 1.0);
+  else col = texture(uVideo, camUV(pix / uSrc)).rgb;
   outColor = vec4(col, 1.0);
+}`;
+
+// contour_effect's first half, at fx resolution: quantise a luminance + depth
+// field into bands, mark where the band index changes, colour by band.
+export const EDGES = COMMON + DEPTH + `
+uniform float uBands, uPhase;
+const vec3 R0 = vec3(0xff, 0x6a, 0x00) / 255.0;   // orange
+const vec3 R1 = vec3(0xff, 0x2d, 0x95) / 255.0;   // pink
+const vec3 R2 = vec3(0x8a, 0x2b, 0xff) / 255.0;   // violet
+
+vec3 ramp(float u) {
+  u = clamp(u, 0.0, 1.0) * 2.0;
+  return u < 1.0 ? mix(R0, R1, u) : mix(R1, R2, u - 1.0);
+}
+// mip 1 ~ the 5x5 GaussianBlur stylize.py applies to luminance first
+float lumAt(vec2 uv) { return dot(textureLod(uVideo, camUV(uv), 1.0).rgb, vec3(0.299, 0.587, 0.114)); }
+float band(vec2 pix) {
+  vec2 uv = pix / uSrc;
+  return floor((0.70 * lumAt(uv) + 0.30 * nearness(uv)) * uBands + uPhase);
+}
+
+void main() {
+  vec2 p = gl_FragCoord.xy;
+  float q = band(p);
+  float edge = (q != band(p + vec2(1, 0)) || q != band(p + vec2(0, 1))) ? 1.0 : 0.0;
+  vec3 col = ramp(mod(q, uBands) / max(uBands - 1.0, 1.0)) * edge;
+
+  // cyan rim on the brighter side of the face: the mask's x-gradient where it
+  // opposes the luminance gradient (Sobel x on both in stylize.py)
+  vec2 uv = p / uSrc, dx = vec2(2.0 / uSrc.x, 0.0);
+  float gm = maskAt(uv + dx) - maskAt(uv - dx);
+  float gl = lumAt(uv + dx) - lumAt(uv - dx);
+  float rim = uHasMask ? clamp(-sign(gl) * gm * 3.0, 0.0, 1.0) : 0.0;
+  outColor = vec4(col, rim);
 }`;
 
 // canvas-sized: places the camera frame like compose() - scaled to the canvas

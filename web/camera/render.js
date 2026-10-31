@@ -20,11 +20,13 @@ export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     const gl = this.gl = createGL(canvas);
+    this.edgePass = new Pass(gl, S.EDGES);
     this.fxPass = new Pass(gl, S.FX);
     this.composite = new Pass(gl, S.COMPOSITE);
     this.output = new Pass(gl, S.OUTPUT);
     this.video = texture(gl, true);
     this.mask = texture(gl, true);
+    this.edges = new Target(gl, true).resize(1, 1);   // mipmapped: bloom/rim are its blurred levels
     this.fx = new Target(gl, true);      // mipmapped: the filmed-FX background blurs it
     this.comp = new Target(gl);
   }
@@ -51,8 +53,18 @@ export class Renderer {
     const minC = Math.max(2, settings.minCell), maxC = Math.max(minC, settings.maxCell);
     // quadtree cells are min_cell * 2^k; the top level is the first one >= max_cell
     const top = minC * 2 ** Math.ceil(Math.log2(maxC / minC));
+    if (settings.effect === 'contour' || settings.effect === 'both') {
+      this.edges.resize(FW, FH);
+      this.edgePass.use()
+        .tex('uVideo', this.video).tex('uMask', this.mask).i('uHasMask', hasMask ? 1 : 0)
+        .i('uMirror', settings.mirror ? 1 : 0).f('uSrc', FW, FH)
+        // stylize.py drifts the band thresholds by 0.05 per frame; 30 fps keeps the speed
+        .f('uBands', settings.bands).f('uPhase', t * 30 * 0.05)
+        .draw(this.edges);
+    }
     this.fxPass.use()
-      .tex('uVideo', this.video).tex('uMask', this.mask).i('uHasMask', hasMask ? 1 : 0)
+      .tex('uVideo', this.video).tex('uMask', this.mask).tex('uEdge', this.edges.tex)
+      .i('uHasMask', hasMask ? 1 : 0)
       .i('uMirror', settings.mirror ? 1 : 0).f('uSrc', FW, FH).i('uEffect', EFFECT[settings.effect])
       .f('uPerson', st ? st.top : 0, st ? st.faceBottom : 0, st ? 1 : 0)
       .v3('uPal', palette).f('uMinCell', minC).f('uMaxCell', maxC).f('uTopCell', top).f('uCamPerFx', vw / FW)

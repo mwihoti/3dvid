@@ -116,6 +116,9 @@ export class Target {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tex, 0);
+    // a mipmapped texture is "incomplete" until its levels exist; build them now so a
+    // target that is bound before it is first drawn samples as black, not an error
+    if (this.mip) gl.generateMipmap(gl.TEXTURE_2D);
     return this;
   }
 }

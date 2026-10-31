@@ -16,12 +16,81 @@ vec2 camUV(vec2 uv) { return uMirror ? vec2(1.0 - uv.x, uv.y) : uv; }
 export const FX = COMMON + `
 uniform sampler2D uVideo;
 uniform sampler2D uMask;
+uniform bool uHasMask;
 uniform vec2 uSrc;      // fx target px
 uniform int uEffect;    // 0 voxel, 1 contour, 2 both, 3 clean
+uniform vec3 uPerson;   // top, face bottom (0..1, y down), present
+uniform vec3 uPal[24];  // build_palette's 24 colours
+uniform float uMinCell, uMaxCell, uTopCell, uCamPerFx;
+
+float maskAt(vec2 uv) { return uHasMask ? texture(uMask, camUV(uv)).r : 1.0; }
+
+// Stand-in for Depth-Anything: there is no depth model running live, so
+// "nearness" grows with distance inside the silhouette (a heavily blurred mask),
+// plus a little luminance for relief. The background is far (largest cells),
+// exactly where the percentile stretch puts it in voxel_effect.
+float nearness(vec2 uv) {
+  if (!uHasMask) return 0.5;
+  vec2 cuv = camUV(uv);
+  if (texture(uMask, cuv).r < 0.35) return 0.0;
+  // wide blur (mip 4 of a 256 px mask) so the gradient spans the whole torso,
+  // not just a rim: cubes then grow from the face out to the shoulders
+  float body = textureLod(uMask, cuv, 4.0).r;
+  float lum = dot(textureLod(uVideo, cuv, 2.0).rgb, vec3(0.299, 0.587, 0.114));
+  return smoothstep(0.30, 1.0, body) * 0.8 + 0.2 * lum;
+}
+
+// face = person AND the top 30% of the person's vertical extent
+bool isFace(vec2 uv) {
+  return uPerson.z > 0.5 && uv.y >= uPerson.x && uv.y <= uPerson.y && maskAt(uv) > 0.35;
+}
+
+float wantCell(vec2 pix) {
+  vec2 uv = pix / uSrc;
+  float s = mix(uMaxCell, uMinCell, nearness(uv));   // near -> min_cell, far -> max_cell
+  return isFace(uv) ? s / 1.5 : s;
+}
+
+vec3 quantise(vec3 c) {
+  vec3 best = c; float bd = 1e9;
+  for (int i = 0; i < 24; i++) {
+    vec3 d = c - uPal[i]; float e = dot(d, d);
+    if (e < bd) { bd = e; best = uPal[i]; }
+  }
+  return best;
+}
+
+// voxel_effect's greedy raster tiling is sequential; a quadtree gives the same
+// "small cubes near, big cubes far" tiling without overlaps, per pixel: a block
+// splits while the depth at its centre asks for cells well under its size.
+vec3 voxel(vec2 pix) {
+  float size = uTopCell;
+  vec2 org = floor(pix / size) * size;
+  for (int i = 0; i < 6; i++) {
+    if (wantCell(org + size * 0.5) >= size * 0.7 || size * 0.5 < uMinCell - 0.01) break;
+    size *= 0.5;
+    org = floor(pix / size) * size;
+  }
+  vec2 c = (org + size * 0.5) / uSrc;
+  // the mip level whose texels are cell-sized holds the cell's mean colour
+  vec3 col = textureLod(uVideo, camUV(c), log2(size * uCamPerFx)).rgb;
+  if (isFace(c)) col = clamp((col - 0.5) * 1.18 + 0.5, 0.0, 1.0);   // features survive quantising
+  col = quantise(col);
+
+  vec2 l = pix - org;                                 // y down inside the cube
+  float t = max(1.0, floor(size / 4.0)), b = max(1.0, floor(size / 5.0));
+  float shade = 1.0;
+  if (l.y < t) shade = 1.20;                          // top face
+  else if (l.x < b) shade = 0.85;                     // left face
+  else if (l.x >= size - b) shade = 0.70;             // right face
+  if (l.y < 1.0 || l.x < 1.0) shade = 0.35;           // 1 px dark seam
+  return clamp(col * shade, 0.0, 1.0);
+}
 
 void main() {
-  vec2 uv = gl_FragCoord.xy / uSrc;
-  outColor = vec4(texture(uVideo, camUV(uv)).rgb, 1.0);
+  vec2 pix = gl_FragCoord.xy;
+  vec3 col = uEffect == 0 ? voxel(pix) : texture(uVideo, camUV(pix / uSrc)).rgb;
+  outColor = vec4(col, 1.0);
 }`;
 
 // canvas-sized: places the camera frame like compose() - scaled to the canvas

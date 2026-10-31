@@ -1,6 +1,7 @@
 // 3dvid live camera: open the camera, style it in the browser, record, save on the device.
 import { Renderer } from './render.js';
 import { Segmenter } from './segment.js';
+import { buildPalette } from './palette.js';
 
 const $ = s => document.querySelector(s);
 
@@ -84,7 +85,7 @@ export const camera = () => ({ video: cam, stream });
 
 $('#flipBtn').onclick = async () => {
   facing = facing === 'user' ? 'environment' : 'user';
-  try { await startCamera(); if (renderer) startLoop(); } catch (e) { setStatus(e.message); }
+  try { await startCamera(); palette = null; if (renderer) startLoop(); } catch (e) { setStatus(e.message); }
 };
 $('#startBtn').onclick = () => startCamera().then(() => {
   if (!renderer) return;
@@ -107,6 +108,15 @@ async function detectStudio() {
 
 // ---- render loop: one styled frame per camera frame
 let renderer = null, seg = null, loopId = 0;
+// palette: built from the first frame at once, rebuilt once a person is found so it
+// is weighted toward them (build_palette does this on the first frame of a clip)
+let palette = null, paletteHasPerson = false;
+function refreshPalette() {
+  const person = !!seg?.stats?.present;
+  palette = buildPalette(cam, person ? seg : null);
+  paletteHasPerson = person;
+}
+$('#paletteBtn').onclick = () => { if (cam.videoWidth) refreshPalette(); };
 const t0 = performance.now();
 const fps = { n: 0, since: performance.now(), value: 0 };
 const segCost = { every: 1, n: 0, ms: 0 };
@@ -125,7 +135,8 @@ function segment() {
 function tick(id) {
   if (id !== loopId) return;                       // a newer loop replaced this one
   segment();
-  if (renderer.frame({ video: cam, settings, seg, t: (performance.now() - t0) / 1000 })) {
+  if (cam.videoWidth && (!palette || (!paletteHasPerson && seg?.stats?.present))) refreshPalette();
+  if (palette && renderer.frame({ video: cam, settings, seg, palette, t: (performance.now() - t0) / 1000 })) {
     fps.n++;
     const now = performance.now();
     if (now - fps.since >= 1000) {

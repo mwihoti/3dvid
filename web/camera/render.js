@@ -30,7 +30,8 @@ export class Renderer {
   }
 
   // seg: a Segmenter (or null while it loads); t: seconds, drives the animated backgrounds
-  frame({ video, settings, seg, t }) {
+  // palette: Float32Array(72) from buildPalette
+  frame({ video, settings, seg, t, palette }) {
     const gl = this.gl;
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return false;
@@ -46,17 +47,23 @@ export class Renderer {
     const fk = Math.min(1, FX_LONG_SIDE / Math.max(vw, vh));
     const FW = Math.round(vw * fk), FH = Math.round(vh * fk);
     this.fx.resize(FW, FH);
+    const st = seg?.stats?.present ? seg.stats : null;
+    const minC = Math.max(2, settings.minCell), maxC = Math.max(minC, settings.maxCell);
+    // quadtree cells are min_cell * 2^k; the top level is the first one >= max_cell
+    const top = minC * 2 ** Math.ceil(Math.log2(maxC / minC));
     this.fxPass.use()
-      .tex('uVideo', this.video).tex('uMask', this.mask)
+      .tex('uVideo', this.video).tex('uMask', this.mask).i('uHasMask', hasMask ? 1 : 0)
       .i('uMirror', settings.mirror ? 1 : 0).f('uSrc', FW, FH).i('uEffect', EFFECT[settings.effect])
+      .f('uPerson', st ? st.top : 0, st ? st.faceBottom : 0, st ? 1 : 0)
+      .v3('uPal', palette).f('uMinCell', minC).f('uMaxCell', maxC).f('uTopCell', top).f('uCamPerFx', vw / FW)
       .draw(this.fx);
 
     const sc = CH / vh, nw = vw * sc, ox = CW * ax - nw / 2;
     const k = Math.min(CW, CH) / 1080;
     // head in canvas px; without a person, head_bbox's fallback (centre, upper third)
-    const st = seg?.stats?.present ? seg.stats : { headX: 0.5, headY: 0.35, headW: 0.4 };
-    const hx = ox + (settings.mirror ? 1 - st.headX : st.headX) * nw;
-    const head = [hx, st.headY * CH, Math.max(st.headW * nw, 40 * k)];
+    const hs = st || { headX: 0.5, headY: 0.35, headW: 0.4 };
+    const hx = ox + (settings.mirror ? 1 - hs.headX : hs.headX) * nw;
+    const head = [hx, hs.headY * CH, Math.max(hs.headW * nw, 40 * k)];
 
     this.composite.use()
       .tex('uVideo', this.video).tex('uFx', this.fx.tex).tex('uMask', this.mask)

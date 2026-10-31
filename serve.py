@@ -150,8 +150,30 @@ def list_videos():
     return out
 
 
+def _normalize_recording(src):
+    """Browser recordings (MediaRecorder) are variable-frame-rate, report a ~1000 fps
+    nominal rate and often carry no duration, so probe() would count frames wrong
+    and the pipelines would read garbage timing. Re-encode to the constant-30-fps
+    H.264 MP4 a phone camera would have produced. Returns the new path."""
+    mp4 = os.path.splitext(src)[0] + ".mp4"
+    tmp = mp4 + ".part.mp4"
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-vf", "fps=30",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", tmp],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        for p in (tmp, src):
+            if os.path.exists(p):
+                os.remove(p)
+        raise HTTPException(422, "could not read the recording: " + r.stderr.strip()[-300:])
+    if src != mp4:
+        os.remove(src)
+    os.replace(tmp, mp4)
+    return mp4
+
+
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), source: str = Form("")):
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"unsupported type {ext!r}; use {sorted(ALLOWED_EXT)}")
@@ -165,6 +187,9 @@ async def upload(file: UploadFile = File(...)):
                 out.close(); os.remove(dest)
                 raise HTTPException(413, "file too large (512 MB cap)")
             out.write(chunk)
+    if source == "camera":
+        dest = await asyncio.to_thread(_normalize_recording, dest)
+        name, n = os.path.basename(dest), os.path.getsize(dest)
     # probe so the UI can show duration/size and warn about long CPU renders
     try:
         # one combined -show_entries; a second flag silently replaces the first
@@ -367,8 +392,12 @@ app.mount("/camera", StaticFiles(directory=os.path.join(WEB, "camera"), html=Tru
 
 @app.get("/api/health")
 def health():
-    import torch
-    return {"cuda": torch.cuda.is_available(), "torch": torch.__version__,
+    try:
+        import torch
+        torch_version = torch.__version__
+    except Exception:          # the web side runs without it; only the render subprocesses need it
+        torch_version = None
+    return {"cuda": HAS_CUDA, "torch": torch_version,
             "auth": bool(AUTH_TOKEN), "cpus": os.cpu_count(),
             "note": ("GPU: ~1 min per 30s stylise render" if HAS_CUDA
                      else "CPU-only: ~8 min per 30s stylise render on 32 cores; scales with cores")}

@@ -18,6 +18,7 @@ from typing import Dict, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _VENV_PY = os.path.join(HERE, "nunif", "venv", "bin", "python")
@@ -357,6 +358,11 @@ def media(name: str):
         raise HTTPException(404, "not found")
     mime = "video/webm" if name.endswith(".webm") else "video/mp4"
     return FileResponse(p, media_type=mime, filename=name)
+
+
+# Live camera page: plain static files, styled entirely in the browser, so it is
+# outside the token gate like "/" (it holds no data; uploads still go via /api/*).
+app.mount("/camera", StaticFiles(directory=os.path.join(WEB, "camera"), html=True), name="camera")
 
 
 @app.get("/api/health")

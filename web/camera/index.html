@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05070f">
+<title>3dvid camera</title>
+<link rel="icon" href="data:,">
+<style>
+:root{
+  --bg:#05070f; --panel:#0b1020; --line:#1d2748; --ink:#e7ecff; --dim:#8f9bc4;
+  --cyan:#39c6ff; --pink:#ff2d95; --orange:#ff6a00; --teal:#19d4c8; --ok:#3ddc97; --err:#ff5f6d;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.app{display:grid;height:100dvh;grid-template-columns:minmax(0,1fr) 330px;
+  grid-template-rows:auto minmax(0,1fr) auto;grid-template-areas:"top top" "stage panel" "dock panel"}
+@media(max-width:860px){
+  .app{grid-template-columns:1fr;grid-template-areas:"top" "stage" "dock"}
+  .panel{position:fixed;left:0;right:0;bottom:0;max-height:62dvh;z-index:20;
+    border-radius:16px 16px 0 0;transform:translateY(105%);transition:transform .22s ease}
+  .panel.open{transform:none}
+}
+.top{grid-area:top;display:flex;align-items:center;gap:10px;padding:10px 14px;
+  padding-top:max(10px,env(safe-area-inset-top))}
+.top h1{margin:0;font-size:16px;flex:1}
+.top h1 span{background:linear-gradient(90deg,var(--orange),var(--pink) 55%,#8a2bff);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.pill{font-size:11.5px;color:var(--dim);border:1px solid var(--line);border-radius:99px;
+  padding:4px 10px;text-decoration:none;white-space:nowrap}
+a.pill:hover{color:var(--ink);border-color:var(--cyan)}
+.stage{grid-area:stage;position:relative;display:flex;align-items:center;justify-content:center;
+  min-height:0;padding:0 10px;overflow:hidden}
+.stage canvas,.stage video{max-width:100%;max-height:100%;border-radius:12px;background:#000;
+  box-shadow:0 0 0 1px var(--line),0 20px 60px -30px rgba(57,198,255,.35)}
+.overlay{position:absolute;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;
+  justify-content:center;text-align:center;padding:24px;background:rgba(5,7,15,.86);color:var(--dim)}
+.overlay b{color:var(--ink);font-size:16px}
+.rec-badge{position:absolute;top:14px;left:50%;transform:translateX(-50%);display:flex;gap:8px;
+  align-items:center;background:rgba(5,7,15,.75);border:1px solid rgba(255,95,109,.5);
+  border-radius:99px;padding:5px 12px;font-variant-numeric:tabular-nums;font-weight:600}
+.rec-badge i{width:9px;height:9px;border-radius:50%;background:var(--err);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+.hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);font-size:12.5px;
+  background:rgba(5,7,15,.75);border:1px solid var(--line);border-radius:99px;padding:5px 12px;color:var(--dim)}
+.dock{grid-area:dock;display:flex;align-items:center;justify-content:center;gap:22px;
+  padding:12px 14px;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+.round{width:46px;height:46px;border-radius:50%;border:1px solid var(--line);background:#0a1024;
+  color:var(--ink);font-size:18px;cursor:pointer;display:grid;place-items:center}
+.round:hover:not(:disabled){border-color:var(--cyan)}
+.round:disabled,.rec:disabled{opacity:.4;cursor:not-allowed}
+.rec{width:70px;height:70px;border-radius:50%;border:3px solid var(--ink);background:transparent;
+  cursor:pointer;display:grid;place-items:center;padding:0}
+.rec i{width:54px;height:54px;border-radius:50%;background:var(--err);transition:.18s}
+.rec.on i{width:26px;height:26px;border-radius:6px}
+@media(min-width:861px){#setBtn{display:none}}
+.panel{grid-area:panel;background:linear-gradient(180deg,var(--panel),#080d1a);border-left:1px solid var(--line);
+  padding:14px 16px 24px;overflow:auto}
+.panel h2{margin:16px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:1.4px;color:var(--dim)}
+.panel h2:first-child{margin-top:2px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1 1 auto;min-width:58px;background:#070c18;color:var(--dim);border:1px solid var(--line);
+  border-radius:9px;padding:8px 6px;font:inherit;font-size:12.5px;cursor:pointer}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed=true]{background:linear-gradient(180deg,#182248,#0e1530);color:var(--ink);
+  border-color:var(--cyan);box-shadow:0 0 0 1px rgba(57,198,255,.25),0 0 18px -6px var(--cyan)}
+.range{display:grid;grid-template-columns:86px 1fr 34px;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin:6px 0}
+.range input{width:100%;accent-color:var(--cyan)}
+.range output{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums}
+.chk{display:flex;align-items:center;gap:9px;font-size:13px;margin:8px 0;cursor:pointer}
+.chk input{width:16px;height:16px;accent-color:var(--cyan);margin:0}
+.chk span{color:var(--dim);font-size:11.5px}
+.go{border:0;border-radius:11px;cursor:pointer;font:inherit;font-weight:650;font-size:14px;color:#06101f;
+  padding:12px 18px;background:linear-gradient(90deg,var(--cyan),var(--teal))}
+.go:disabled{opacity:.45;cursor:not-allowed}
+.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:11px;cursor:pointer;
+  padding:11px 16px;font:inherit;font-size:13.5px;text-decoration:none;text-align:center}
+.ghost:hover{border-color:var(--cyan)}
+.small{font-size:12px;padding:7px 12px;width:100%;margin-top:8px}
+.note{font-size:11.5px;color:var(--dim);margin-top:10px}
+.sheet{position:fixed;inset:0;z-index:30;background:rgba(5,7,15,.94);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:12px;padding:20px;padding-bottom:max(20px,env(safe-area-inset-bottom))}
+.sheet video,.sheet img{max-width:min(100%,900px);max-height:58dvh;border-radius:12px;background:#000}
+.actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.meta{font-size:12px;color:var(--dim);text-align:center}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <h1><span>3dvid</span> camera</h1>
+    <a id="studioLink" class="pill hide" href="../">Studio →</a>
+    <div class="pill" id="status">starting…</div>
+  </header>
+
+  <main class="stage" id="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="out" class="hide"></canvas>
+    <div class="overlay hide" id="overlay">
+      <div id="overlayMsg"><b>Camera access needed</b><br>Allow the camera (and microphone, for sound) to record.</div>
+      <button class="go" id="startBtn">Start camera</button>
+    </div>
+    <div class="rec-badge hide" id="recBadge"><i></i><span id="recTime">0:00</span></div>
+    <div class="hint hide" id="hint">Step into the frame</div>
+  </main>
+
+  <div class="dock">
+    <button class="round" id="flipBtn" title="Switch camera" aria-label="Switch camera"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg></button>
+    <button class="rec" id="recBtn" disabled title="Record" aria-label="Record"><i></i></button>
+    <button class="round" id="snapBtn" disabled title="Take a photo" aria-label="Take a photo"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+    <button class="round" id="setBtn" title="Styles" aria-label="Styles"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></button>
+  </div>
+
+  <aside class="panel" id="panel">
+    <h2>Effect</h2>
+    <div class="seg" id="effect">
+      <button data-v="voxel" aria-pressed="true">Voxel</button>
+      <button data-v="contour" aria-pressed="false">Neon</button>
+      <button data-v="both" aria-pressed="false">Both</button>
+      <button data-v="clean" aria-pressed="false">Clean</button>
+    </div>
+    <h2>Background</h2>
+    <div class="seg" id="bg">
+      <button data-v="plasma" aria-pressed="true">Plasma</button>
+      <button data-v="grid" aria-pressed="false">Grid</button>
+      <button data-v="dark" aria-pressed="false">Dark</button>
+      <button data-v="filmed" aria-pressed="false">Filmed</button>
+      <button data-v="source" aria-pressed="false">Filmed FX</button>
+    </div>
+    <h2>Face</h2>
+    <div class="seg" id="face">
+      <button data-v="off" aria-pressed="true">Effect everywhere</button>
+      <button data-v="clear" aria-pressed="false">Keep face clear</button>
+      <button data-v="only" aria-pressed="false">Face only</button>
+    </div>
+    <h2>Layout</h2>
+    <div class="seg" id="layout">
+      <button data-v="wide" aria-pressed="true">16:9</button>
+      <button data-v="portrait" aria-pressed="false">9:16</button>
+      <button data-v="square" aria-pressed="false">1:1</button>
+      <button data-v="native" aria-pressed="false">Camera</button>
+    </div>
+    <h2>Quality</h2>
+    <div class="seg" id="quality">
+      <button data-v="720" aria-pressed="true">720p</button>
+      <button data-v="1080" aria-pressed="false">1080p</button>
+    </div>
+    <h2>Tuning</h2>
+    <label class="range">Bands<input type="range" id="bands" min="4" max="30" value="12"><output>12</output></label>
+    <label class="range">Min cell<input type="range" id="minCell" min="4" max="24" value="8"><output>8</output></label>
+    <label class="range">Max cell<input type="range" id="maxCell" min="8" max="64" value="24"><output>24</output></label>
+    <label class="range">Grain<input type="range" id="grain" min="0" max="12" value="0"><output>0</output></label>
+    <label class="chk"><input type="checkbox" id="mirror" checked>Mirror<span>like a selfie</span></label>
+    <label class="chk"><input type="checkbox" id="chroma">Chromatic fringe</label>
+    <button class="ghost small" id="paletteBtn">Re-sample voxel colours</button>
+    <div id="studioOpts" class="hide">
+      <h2>Studio</h2>
+      <label class="chk"><input type="checkbox" id="keepRaw">Also keep the raw take<span>for an exact studio render</span></label>
+    </div>
+    <div class="note">Styles run live on this device. Depth is approximated from your silhouette; the studio's
+      exact render uses a real depth model.</div>
+  </aside>
+</div>
+
+<section class="sheet hide" id="sheet">
+  <video id="take" class="hide" controls playsinline loop></video>
+  <img id="still" class="hide" alt="photo">
+  <div class="meta" id="takeMeta"></div>
+  <div class="actions">
+    <button class="go" id="saveBtn">Save to device</button>
+    <a class="ghost" id="dlLink" download>Download file</a>
+    <button class="ghost hide" id="hqBtn">Render exact version in studio</button>
+    <button class="ghost" id="backBtn">Back to camera</button>
+  </div>
+  <div class="meta" id="hqStatus"></div>
+</section>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

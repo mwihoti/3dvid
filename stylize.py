@@ -97,6 +97,30 @@ def read_frames(path, limit=None):
     finally:
         p.stdout.close(); p.wait()
 
+def read_one_frame(path, idx):
+    """One RGB frame by index, via a seek. Decoding every frame up to idx just to
+    throw them away is what made a still cost minutes instead of seconds.
+    -ss before -i seeks to the preceding keyframe and decodes forward, so it is
+    both fast and frame-accurate; on a variable-rate clip it can land a frame off,
+    which is irrelevant for a preview still."""
+    info = probe(path)
+    w, h = info["w"], info["h"]
+    nbytes = w * h * 3
+    # No -ss for frame 0: there is nothing to seek to, and "-ss 0" on a JPEG (the
+    # image2 demuxer) emits zero bytes and no error at all, which would make every
+    # photo render fail silently.
+    seek = ["-ss", f"{idx / info['fps']:.6f}"] if idx > 0 else []
+    cmd = ["ffmpeg", "-v", "error", *seek,
+           "-i", path, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=nbytes)
+    try:
+        buf = p.stdout.read(nbytes)
+    finally:
+        p.stdout.close(); p.wait()
+    if len(buf) < nbytes:
+        raise RuntimeError(f"could not read frame {idx} of {path}")
+    return np.frombuffer(buf, np.uint8).reshape(h, w, 3).copy()
+
 # ---------------------------------------------------------------- cache ----
 def cache_key(video):
     st = os.stat(video)
@@ -199,6 +223,42 @@ def get_cached(video, n_frames, ema_alpha, refresh=False):
         mask = compute_masks(video, n_frames)
     np.savez_compressed(f, depth=depth, mask=mask)
     print(f"cache write {os.path.relpath(f, HERE)}  ({os.path.getsize(f)/1e6:.1f} MB)")
+    return depth, mask
+
+def get_cached_one(video, frame_idx, frame, refresh=False):
+    """depth + mask for ONE frame, for --frame stills.
+
+    `frame` is the already-decoded RGB frame, so the still path decodes once.
+    Prefers the full-video cache when it already covers frame_idx - free, and
+    identical to what a video render sees. Otherwise infers exactly one frame
+    into its own cache file. That separate file is deliberate: writing a 1-frame
+    array into dm_<key>.npz would silently discard an existing full-clip depth
+    pass, so a quick preview would cost the next full render another 8 minutes.
+
+    A still has no frame history, so the depth EMA is a no-op here and the result
+    is marginally less temporally smoothed than the same frame inside a video.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    key = cache_key(video)
+    full = os.path.join(CACHE_DIR, f"dm_{key}.npz")
+    if os.path.exists(full) and not refresh:
+        z = np.load(full)
+        if z["depth"].shape[0] > frame_idx:
+            print(f"cache hit  {os.path.relpath(full, HERE)}  (frame {frame_idx})")
+            return z["depth"][frame_idx], z["mask"][frame_idx]
+    one = os.path.join(CACHE_DIR, f"one_{key}_f{frame_idx}.npz")
+    if os.path.exists(one) and not refresh:
+        z = np.load(one)
+        print(f"cache hit  {os.path.relpath(one, HERE)}")
+        return z["depth"], z["mask"]
+
+    ch, cw = _cache_dims(video)
+    with stage("depth (model)"):
+        depth = _to_cache(_norm01(_depth_batch(_depth_model(), [frame])[0]), ch, cw)
+    with stage("mask (model)"):
+        mask = cv2.resize(_mask_one(_mask_session(), frame), (cw, ch), interpolation=cv2.INTER_AREA)
+    np.savez_compressed(one, depth=depth, mask=mask)
+    print(f"cache write {os.path.relpath(one, HERE)}")
     return depth, mask
 
 # ---------------------------------------------------------------- palette ----
@@ -674,9 +734,45 @@ def encode(frames_dir, fps, out_base, src, keep_audio, av1=False, crf=24, webm_c
     return results
 
 # ---------------------------------------------------------------- main ----
+def render_one(fr, d, m, palette, a, face_mode, t, idx, rs):
+    """Per-frame pipeline: effect -> face handling -> background composite.
+    Shared by the video loop and the --frame still path."""
+    fr_sharp = unsharp(fr, a.sharpen) if a.sharpen > 0 else fr
+    layer = None
+    if a.effect == "clean":
+        layer = fr_sharp.copy()
+    if a.effect in ("voxel", "both"):
+        with stage("effect voxel"):
+            layer = voxel_effect(fr, d, m, palette, a.min_cell, a.max_cell)
+    if a.effect in ("contour", "both"):
+        with stage("effect contour"):
+            c = contour_effect(fr, d, m, idx, a.bands, a.glow)
+        layer = c if a.effect == "contour" else np.clip(
+            layer.astype(np.float32) * 0.45 + c.astype(np.float32) * 0.75, 0, 255).astype(np.uint8)
+
+    # effects render the whole frame; keep that copy for a stylised filmed background
+    full_fx = layer
+    if face_mode != "off" and a.effect != "clean":
+        with stage("face " + face_mode):
+            ff = a.face_frac if a.face_frac == "auto" else float(a.face_frac)
+            fm = face_protect(m, ff, rgb=fr, pad=a.face_pad)[..., None]
+            if face_mode == "only":
+                # keep the effect on the head, revert everything else to source
+                fm = 1.0 - fm
+            layer = np.clip(layer.astype(np.float32) * (1 - fm) + fr_sharp.astype(np.float32) * fm,
+                            0, 255).astype(np.uint8)
+
+    with stage("background+composite"):
+        # "source" reuses the stylised frame behind the subject; "filmed" uses
+        # the untouched frame, so only the person carries the effect
+        src_bg = full_fx if a.bg == "source" else (fr if a.bg == "filmed" else None)
+        return compose(layer, m, a.bg, a.layout, t, idx,
+                       a.chromatic, a.grain, rs, src_bg=src_bg)
+
 def main():
     ap = argparse.ArgumentParser(description="Stylise a talking-head clip into a portfolio intro.")
-    ap.add_argument("input")
+    ap.add_argument("input", help="video clip, or a still image (jpg/png/webp) "
+                                  "for a one-frame render")
     ap.add_argument("--effect", choices=["voxel", "contour", "both", "clean"], default="voxel",
                     help="clean = person kept as original pixels, only the background changes")
     ap.add_argument("--bg", choices=["plasma", "grid", "dark", "source", "filmed"], default="plasma",
@@ -703,7 +799,9 @@ def main():
     ap.add_argument("--min-cell", type=int, default=8)
     ap.add_argument("--max-cell", type=int, default=24)
     ap.add_argument("--preview", type=float, default=0, help="render only first N seconds")
-    ap.add_argument("--frame", type=int, default=None, help="dump a single PNG and exit")
+    ap.add_argument("--frame", type=int, default=None,
+                    help="frame INDEX to dump as a single PNG, then exit. Runs one depth "
+                         "and one mask inference, so it returns in seconds")
     ap.add_argument("--glow", type=int, default=9, help="contour bloom radius (odd)")
     ap.add_argument("--ema", type=float, default=0.4, help="depth EMA alpha")
     ap.add_argument("--feather", type=int, default=6, help="mask feather px")
@@ -722,75 +820,64 @@ def main():
 
     face_mode = a.face_mode or ("clear" if a.face_clear else "off")
     info = probe(a.input)
+    if info["is_image"]:
+        # a photo is just a one-frame render: same effects, same backgrounds, no encode
+        if a.preview:
+            print("still image input - ignoring --preview")
+        if a.frame is None:
+            a.frame = 0
     n = info["n"]
     if a.frame is not None:
-        n = min(n, a.frame + 1)
+        n = 1
     elif a.preview:
         n = min(n, int(round(a.preview * info["fps"])))
-    print(f"input {a.input}  {info['w']}x{info['h']}  {info['fps']:.3f} fps  using {n} frames")
+    scope = f"frame {a.frame} only" if a.frame is not None else f"using {n} frames"
+    print(f"input {a.input}  {info['w']}x{info['h']}  {info['fps']:.3f} fps  {scope}")
+
+    out_base = a.out or os.path.join(HERE, f"intro_{a.effect}_{a.bg}_{a.layout}")
+    rs = np.random.RandomState(3)
+    k = a.feather | 1
+
+    # ---- still: one depth + one mask inference, not a.frame + 1 of each ----
+    if a.frame is not None:
+        fi = max(0, min(a.frame, info["n"] - 1))
+        if fi != a.frame:
+            print(f"clip has {info['n']} frames; using frame {fi}")
+        with stage("read frame"):
+            fr = read_one_frame(a.input, fi)
+        d_u8, m_u8 = get_cached_one(a.input, fi, fr, a.refresh_cache)
+        H, W = fr.shape[:2]
+        with stage("upsample cache"):
+            d, m = _upsample(d_u8, m_u8, W, H, k)
+        with stage("palette (kmeans)"):
+            palette = build_palette(fr, m)
+        out = render_one(fr, d, m, palette, a, face_mode, fi / info["fps"], fi, rs)
+        out_png = out_base + f"_f{fi}.png"
+        cv2.imwrite(out_png, out[..., ::-1])
+        print("wrote", out_png)
+        print_timings(1)
+        return
 
     depth_c, mask_c = get_cached(a.input, n, a.ema, a.refresh_cache)
 
-    out_base = a.out or os.path.join(HERE, f"intro_{a.effect}_{a.bg}_{a.layout}")
     frames_dir = out_base + "_frames"
-    if a.frame is None:
-        shutil.rmtree(frames_dir, ignore_errors=True); os.makedirs(frames_dir)
+    shutil.rmtree(frames_dir, ignore_errors=True); os.makedirs(frames_dir)
 
-    palette, rs = None, np.random.RandomState(3)
-    k = a.feather | 1
-    idx = 0
+    palette = None
     written = 0
 
-    for fr in tqdm(read_frames(a.input, n), total=n, desc="render", unit="f"):
-        if a.frame is not None and idx != a.frame:
-            idx += 1; continue
+    for idx, fr in enumerate(tqdm(read_frames(a.input, n), total=n, desc="render", unit="f")):
         H, W = fr.shape[:2]
         with stage("upsample cache"):
-            d = cv2.resize(depth_c[idx].astype(np.float32) / 255., (W, H), interpolation=cv2.INTER_LINEAR)
-            m = cv2.resize(mask_c[idx].astype(np.float32) / 255., (W, H), interpolation=cv2.INTER_LINEAR)
-            m = cv2.GaussianBlur(m, (k, k), 0)                 # ~6px feather
+            d, m = _upsample(depth_c[idx], mask_c[idx], W, H, k)   # ~6px feather
         if palette is None:
             with stage("palette (kmeans)"):
                 palette = build_palette(fr, m)
 
-        fr_sharp = unsharp(fr, a.sharpen) if a.sharpen > 0 else fr
-        if a.effect == "clean":
-            layer = fr_sharp.copy()
-        if a.effect in ("voxel", "both"):
-            with stage("effect voxel"):
-                layer = voxel_effect(fr, d, m, palette, a.min_cell, a.max_cell)
-        if a.effect in ("contour", "both"):
-            with stage("effect contour"):
-                c = contour_effect(fr, d, m, idx, a.bands, a.glow)
-            layer = c if a.effect == "contour" else np.clip(
-                layer.astype(np.float32) * 0.45 + c.astype(np.float32) * 0.75, 0, 255).astype(np.uint8)
-
-        # effects render the whole frame; keep that copy for a stylised filmed background
-        full_fx = layer
-        if face_mode != "off" and a.effect != "clean":
-            with stage("face " + face_mode):
-                ff = a.face_frac if a.face_frac == "auto" else float(a.face_frac)
-                fm = face_protect(m, ff, rgb=fr, pad=a.face_pad)[..., None]
-                if face_mode == "only":
-                    # keep the effect on the head, revert everything else to source
-                    fm = 1.0 - fm
-                layer = np.clip(layer.astype(np.float32) * (1 - fm) + fr_sharp.astype(np.float32) * fm,
-                                0, 255).astype(np.uint8)
-
-        with stage("background+composite"):
-            # "source" reuses the stylised frame behind the subject; "filmed" uses
-            # the untouched frame, so only the person carries the effect
-            src_bg = full_fx if a.bg == "source" else (fr if a.bg == "filmed" else None)
-            out = compose(layer, m, a.bg, a.layout, idx / info["fps"], idx,
-                          a.chromatic, a.grain, rs, src_bg=src_bg)
-
-        if a.frame is not None:
-            p = out_base + f"_f{a.frame}.png"
-            cv2.imwrite(p, out[..., ::-1])
-            print("wrote", p); print_timings(1); return
+        out = render_one(fr, d, m, palette, a, face_mode, idx / info["fps"], idx, rs)
         with stage("png write"):
             cv2.imwrite(os.path.join(frames_dir, f"{written:06d}.png"), out[..., ::-1])
-        written += 1; idx += 1
+        written += 1
 
     with stage("encode"):
         files = encode(frames_dir, info["fps"], out_base, a.input, not a.no_audio,

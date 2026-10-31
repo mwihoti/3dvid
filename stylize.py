@@ -141,6 +141,10 @@ def _depth_batch(model, frames):
     """frames -> raw per-frame depth maps, before normalisation/EMA."""
     import torch
     x = torch.stack([torch.from_numpy(f.copy()).permute(2, 0, 1).float() / 255. for f in frames])
+    # iw3's infer() runs on whatever device the batch is on, so a CPU batch against
+    # a CUDA model fails ("Input type (torch.FloatTensor) and weight type
+    # (torch.cuda.FloatTensor) should be the same"). Only CPU hosts hid this.
+    x = x.to(model.device)
     with torch.inference_mode():
         d = model.infer(x)
     return d.squeeze(1).float().cpu().numpy()

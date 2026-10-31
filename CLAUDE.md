@@ -34,7 +34,7 @@ Render (always through the nunif venv python):
 ./nunif/venv/bin/python serve.py                                                      # web UI on 127.0.0.1:8000
 ```
 
-There is no test suite and no linter config. Verify changes by rendering `--frame N` (seconds) or `--preview 3` (tens of seconds) rather than full clips. `stylize.py` prints a per-stage timing table at the end; use it when touching performance.
+There is no test suite and no linter config. For `web/camera/`, `node --check web/camera/*.js` catches syntax; shaders only compile at runtime, so load the page (headless Chromium with `--use-fake-device-for-media-stream --use-file-for-fake-video-capture=<clip>.y4m` works) and watch the console for `shader compile failed`. Verify changes by rendering `--frame N` (seconds) or `--preview 3` (tens of seconds) rather than full clips. `stylize.py` prints a per-stage timing table at the end; use it when touching performance.
 
 Container: `docker compose up -d --build` (CPU) or add `-f docker-compose.gpu.yml` (CUDA). The image bakes all model weights, so a Dockerfile change that touches the pip/weights layers costs a 10–20 min rebuild.
 
@@ -50,6 +50,10 @@ Three layers, deliberately decoupled by process boundaries:
 
 3. **`serve.py` + `web/index.html`** is a FastAPI wrapper that builds the exact CLI command in `_build_cmd` (the two pipelines' flags live there and must mirror `convert3d.sh`), runs it as a subprocess in its own session, and scrapes tqdm/iw3 progress lines from stderr into weighted stage percentages (`STAGE_WEIGHTS`). One job at a time (409 otherwise). Jobs persist to `jobs.json` only so a restarted server can mark orphans as errors. The single HTML page keeps the bearer token in `localStorage`; `/api/*` and `/media/*` require it when `AUTH_TOKEN` is set, `/` and `/api/health` never do.
 
+4. **`web/camera/`** is a static, client-only live camera (served by `serve.py` at `/camera/`, outside the token gate, and published to GitHub Pages by `.github/workflows/camera-pages.yml`). `segment.js` runs MediaPipe's selfie segmenter (pinned `@mediapipe/tasks-vision` version, CDN) on a 256 px copy of each frame and ports `head_bbox` + the silhouette half of `neck_boundary`; `palette.js` ports `build_palette`; `shaders.js` ports the effects, `bg_*`, `compose`, `face_protect`, `chromatic` and `grain` to GLSL; `render.js` runs the passes (edges → fx → composite → canvas); `recorder.js` records the canvas with MediaRecorder and saves via the share sheet / download. **Changing a look in `stylize.py` means changing `shaders.js` too** if the live preview should keep matching. Deliberate differences: depth is a silhouette-based stand-in (`nearness()`), voxel tiling is a quadtree, bokeh positions differ. A studio-served page can upload the raw take (`/api/upload` with `source=camera`, which re-encodes to constant 30 fps because MediaRecorder output is VFR with a ~1000 fps nominal rate) and start the exact render.
+
+   Orientation rule in the shaders: texture row 0 is the top of the image and offscreen passes treat `gl_FragCoord.y` as a y-down row; only the final pass to the canvas flips. `uMirror` flips camera-space lookups only; segmenter stats are in unmirrored camera space and are mirrored in `render.js`.
+
 Everything mutable lives under `DATA_DIR` (`uploads/`, `outputs/`, `.stylize_cache/`, `jobs.json`); defaults to the repo dir locally and `/app/data` in the image. Mount a volume there or renders vanish on restart.
 
 ## Gotchas
@@ -58,6 +62,8 @@ Everything mutable lives under `DATA_DIR` (`uploads/`, `outputs/`, `.stylize_cac
 - iw3 time args want `hh:mm:ss`, `mm:ss`, or integer seconds; a float like `2.0` is rejected (see the preview handling in `_build_cmd`).
 - Never pass `-ss 0` to ffmpeg for frame 0: on a JPEG (the `image2` demuxer) it emits **zero bytes and no error**, so every photo render fails silently. `read_one_frame` omits `-ss` entirely when `idx == 0`. PNG (`png_pipe`) and mp4 are unaffected.
 - `probe()` detects a still from the container `format_name` (`image2` / `*_pipe`), not from fps or duration: ffprobe invents a nominal `25/1` rate for a JPEG and omits `format.duration` for a PNG (which used to make `probe()` raise `KeyError`).
+- Camera recording: never put plain `video/mp4` before WebM in `recorder.js`'s list. A browser without an H.264 encoder honours it with VP9 inside MP4, a `.mp4` that photo apps reject.
+- `/api/health` must stay importable without torch: the camera page uses it to detect the studio.
 - `convert3d.sh` hardcodes `cd /root/3dvid/nunif`; it is written for the qm-personal host and the container, not for arbitrary checkouts.
 - `.gitignore` excludes all media, caches, `venv/`, `.env`; `.dockerignore` additionally excludes `nunif/` because the Dockerfile clones it itself.
 

@@ -5,6 +5,7 @@ Turn a talking-head clip into a stylised portfolio intro, or into stereo 3D for 
 - `stylize.py` — voxel / neon-contour effects, procedural backgrounds (plasma, grid, dark) or the filmed background, layouts (wide / portrait / square / native), face-clear mode with automatic neck detection, lossless audio passthrough, H.264 + WebM output.
 - `serve.py` + `web/` — local web UI: upload, pick options, watch progress, play the result.
 - `convert3d.sh` — half-SBS stereo 3D via iw3.
+- `web/camera/` — live camera: the same styles running in the browser, recorded and saved on your phone or laptop. Needs no server.
 
 ## Setup
 
@@ -37,6 +38,19 @@ cd nunif && python3 -m venv venv && ./venv/bin/pip install -r requirements-torch
 ```
 
 Depth and person masks are cached in `.stylize_cache/` per clip, so re-renders skip both model passes. A still (`--frame N`, or an image input) reuses that cache when it covers the frame and otherwise infers just that one frame into its own cache entry — it never overwrites the full-clip cache. Rotated phone clips are handled (display dimensions are used, not stored ones).
+
+## Live camera
+
+Open the camera, see the voxel / neon styles live, record, and save the video (or a photo) on the device.
+
+- **From the studio:** `serve.py` serves it at `/camera/` (link in the studio header).
+- **On its own, free:** the `camera page` workflow publishes `web/camera/` to GitHub Pages on every push to `main`. Enable it once with Settings → Pages → Source: *GitHub Actions*; it is then at `https://<owner>.github.io/3dvid/`. Open that on a phone.
+
+Cameras only open over **HTTPS** (or on `localhost`); a phone pointed at `http://<laptop-ip>:8000` will be refused.
+
+Everything runs on the device: MediaPipe's selfie segmenter finds the person, and WebGL2 shaders port the effects, backgrounds, layouts, face modes, fringe and grain from `stylize.py`. Two things are approximated to run live: **depth** (estimated from the silhouette rather than Depth-Anything), and the voxel tiling (a quadtree rather than the greedy raster pass). For the exact look, turn on *Also keep the raw take* (studio only) and press *Render exact version in studio* after recording: the untouched camera take is uploaded, converted to constant-30-fps MP4, and rendered by `stylize.py` with the same settings.
+
+Saving: on phones *Save to device* opens the share sheet (*Save Video* puts it in Photos); on desktops it downloads. Takes record as H.264 MP4 where the browser can (Chrome, Safari), else WebM.
 
 ## Deploy (Docker / IBM Cloud Code Engine)
 

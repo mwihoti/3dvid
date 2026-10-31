@@ -1,4 +1,6 @@
 // 3dvid live camera: open the camera, style it in the browser, record, save on the device.
+import { Renderer } from './render.js';
+
 const $ = s => document.querySelector(s);
 
 // ---- settings (mirrors the studio's stylize.py options where they exist)
@@ -81,9 +83,12 @@ export const camera = () => ({ video: cam, stream });
 
 $('#flipBtn').onclick = async () => {
   facing = facing === 'user' ? 'environment' : 'user';
-  try { await startCamera(); } catch (e) { setStatus(e.message); }
+  try { await startCamera(); if (renderer) startLoop(); } catch (e) { setStatus(e.message); }
 };
-$('#startBtn').onclick = () => startCamera().catch(e => setStatus(e.message));
+$('#startBtn').onclick = () => startCamera().then(() => {
+  if (!renderer) return;
+  cam.classList.add('offscreen'); $('#out').classList.remove('hide'); startLoop();
+}).catch(e => setStatus(e.message));
 
 // ---- studio (only when this page is served by serve.py, not as a static site)
 export const studio = { available: false };
@@ -99,12 +104,45 @@ async function detectStudio() {
   } catch { /* static hosting: no studio, the page still works on its own */ }
 }
 
+// ---- render loop: one styled frame per camera frame
+let renderer = null, loopId = 0;
+const fps = { n: 0, since: performance.now(), value: 0 };
+
+function tick(id) {
+  if (id !== loopId) return;                       // a newer loop replaced this one
+  if (renderer.frame({ video: cam, settings })) {
+    fps.n++;
+    const now = performance.now();
+    if (now - fps.since >= 1000) {
+      fps.value = Math.round(fps.n * 1000 / (now - fps.since));
+      fps.n = 0; fps.since = now;
+      setStatus(`${fps.value} fps · ${$('#out').width}×${$('#out').height}`);
+    }
+  }
+  schedule(id);
+}
+function schedule(id) {
+  if (cam.requestVideoFrameCallback) cam.requestVideoFrameCallback(() => tick(id));
+  else requestAnimationFrame(() => tick(id));
+}
+function startLoop() { schedule(++loopId); }
+
 async function main() {
   detectStudio();
+  try {
+    renderer = new Renderer($('#out'));
+  } catch (e) {
+    showOverlay(`<b>Live styles are not supported here</b><br>${e.message}`, false);
+    return;
+  }
   try {
     await startCamera();
   } catch (e) {
     if ($('#overlay').classList.contains('hide')) showOverlay(`<b>Could not open the camera</b><br>${e.message}`);
+    return;
   }
+  cam.classList.add('offscreen');
+  $('#out').classList.remove('hide');
+  startLoop();
 }
 main();

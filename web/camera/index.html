@@ -85,6 +85,18 @@ a.pill:hover{color:var(--ink);border-color:var(--cyan)}
 .actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 .meta{font-size:12px;color:var(--dim);text-align:center}
 .meta a{color:var(--cyan)}
+.keys{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;
+  background:rgba(5,7,15,.9);border:1px solid var(--line);border-radius:14px;padding:16px 20px;
+  font-size:13px;line-height:1.7;color:var(--dim);white-space:nowrap}
+.keys b{color:var(--ink);font-family:ui-monospace,monospace;background:#141c38;border-radius:5px;padding:0 6px;margin-right:4px}
+/* meeting mode: only the picture, edge to edge, for a virtual camera to capture */
+body.meeting{background:#000}
+body.meeting .app{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr);grid-template-areas:"stage"}
+body.meeting .top,body.meeting .dock{display:none}
+body.meeting .panel{position:fixed;right:0;top:0;bottom:0;width:330px;z-index:20;transform:translateX(105%);transition:transform .22s ease;border-radius:0}
+body.meeting .panel.open{transform:none}
+body.meeting .stage{padding:0}
+body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radius:0;box-shadow:none;max-width:none;max-height:none}
 .hide{display:none!important}
 /* the camera <video> must keep decoding frames: iOS stops updating display:none videos */
 .offscreen{position:fixed!important;left:0;top:0;width:2px!important;height:2px!important;opacity:0;pointer-events:none}
@@ -107,6 +119,12 @@ a.pill:hover{color:var(--ink);border-color:var(--cyan)}
     </div>
     <div class="rec-badge hide" id="recBadge"><i></i><span id="recTime">0:00</span></div>
     <div class="hint hide" id="hint">Step into the frame</div>
+    <div class="keys hide" id="keys">
+      <b>1</b>voxel <b>2</b>neon <b>3</b>both <b>4</b>clean<br>
+      <b>q</b>plasma <b>w</b>grid <b>e</b>dark <b>r</b>filmed <b>t</b>filmed FX<br>
+      <b>f</b>face mode <b>m</b>mirror <b>c</b>fringe <b>g</b>grain <b>p</b>colours<br>
+      <b>s</b>settings panel <b>h</b>this help
+    </div>
   </main>
 
   <div class="dock">
@@ -163,6 +181,8 @@ a.pill:hover{color:var(--ink);border-color:var(--cyan)}
     <label class="chk"><input type="checkbox" id="mirror" checked>Mirror<span>like a selfie</span></label>
     <label class="chk"><input type="checkbox" id="chroma">Chromatic fringe</label>
     <button class="ghost small" id="paletteBtn">Re-sample voxel colours</button>
+    <a class="ghost small" id="meetingLink" href="./?meeting" target="_blank" rel="opener"
+       style="display:block" title="Opens a clean, unmirrored picture for OBS to capture as a virtual camera">Use in a meeting (OBS) →</a>
     <div id="studioOpts" class="hide">
       <h2>Studio</h2>
       <label class="chk"><input type="checkbox" id="keepRaw">Also keep the raw take<span>for an exact studio render</span></label>

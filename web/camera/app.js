@@ -7,10 +7,46 @@ import { Recorder, saveToDevice, extFor, stamp } from './recorder.js';
 const $ = s => document.querySelector(s);
 
 // ---- settings (mirrors the studio's stylize.py options where they exist)
-export const settings = {
+const DEFAULTS = {
   effect: 'voxel', bg: 'plasma', face: 'off', layout: 'wide', quality: '720', subjectX: '',
   bands: 12, minCell: 8, maxCell: 24, grain: 0, mirror: true, chroma: false, keepRaw: false,
 };
+const SEGS = ['effect', 'bg', 'face', 'layout', 'quality', 'subjectX'];
+const RANGES = ['bands', 'minCell', 'maxCell', 'grain'];
+const CHECKS = ['mirror', 'chroma', 'keepRaw'];
+const params = new URLSearchParams(location.search);
+// Meeting mode (?meeting): just the styled picture, nothing else on screen, for a
+// virtual camera (OBS window capture) to feed Zoom / Meet / Teams. Mirror is off
+// because meeting apps mirror your self-view themselves and send others the
+// unmirrored picture; "native" keeps the webcam's own size and aspect.
+export const MEETING = params.has('meeting');
+export const settings = { ...DEFAULTS, ...(MEETING ? { mirror: false, layout: 'native' } : {}) };
+
+// remembered choices, then anything given in the URL (?effect=contour&bg=grid&face=clear)
+try { Object.assign(settings, JSON.parse(localStorage.getItem('camSettings') || '{}')); } catch { /* ignore */ }
+if (MEETING) { settings.mirror = false; settings.keepRaw = false; }
+for (const [k, v] of params) {
+  if (!(k in DEFAULTS) || k === 'keepRaw') continue;
+  settings[k] = RANGES.includes(k) ? +v : CHECKS.includes(k) ? v !== '0' && v !== 'false' : v;
+}
+function saveSettings() {
+  const { keepRaw, ...rest } = settings;          // keepRaw is a per-take choice, not a preference
+  if (MEETING) { delete rest.mirror; delete rest.layout; }   // meeting-only overrides must not leak into the normal page
+  localStorage.setItem('camSettings', JSON.stringify(rest));
+}
+// push `settings` into the controls (after loading, and after a keyboard shortcut)
+function syncUI() {
+  for (const id of SEGS) {
+    const seg = document.getElementById(id);
+    [...seg.children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === String(settings[id]))));
+  }
+  for (const id of RANGES) {
+    const inp = document.getElementById(id);
+    inp.value = settings[id]; inp.nextElementSibling.value = settings[id];
+  }
+  for (const id of CHECKS) document.getElementById(id).checked = !!settings[id];
+}
+syncUI();
 
 document.querySelectorAll('.seg').forEach(seg => {
   seg.addEventListener('click', e => {
@@ -37,7 +73,34 @@ document.addEventListener('pointerdown', e => {          // tap outside closes t
 
 const listeners = [];
 export const onSettingsChange = fn => listeners.push(fn);
-function onSettings(key) { listeners.forEach(fn => fn(key)); }
+function onSettings(key) { saveSettings(); listeners.forEach(fn => fn(key)); }
+
+// ---- meeting mode: keyboard shortcuts, since the controls are hidden
+const KEYS = {
+  '1': ['effect', 'voxel'], '2': ['effect', 'contour'], '3': ['effect', 'both'], '4': ['effect', 'clean'],
+  'q': ['bg', 'plasma'], 'w': ['bg', 'grid'], 'e': ['bg', 'dark'], 'r': ['bg', 'filmed'], 't': ['bg', 'source'],
+};
+const FACE_CYCLE = ['off', 'clear', 'only'];
+if (MEETING) {
+  document.body.classList.add('meeting');
+  document.addEventListener('keydown', ev => {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const k = ev.key.toLowerCase();
+    if (KEYS[k]) [settings[KEYS[k][0]]] = [KEYS[k][1]];
+    else if (k === 'f') settings.face = FACE_CYCLE[(FACE_CYCLE.indexOf(settings.face) + 1) % 3];
+    else if (k === 'm') settings.mirror = !settings.mirror;
+    else if (k === 'c') settings.chroma = !settings.chroma;
+    else if (k === 'g') settings.grain = settings.grain ? 0 : 6;
+    else if (k === 'p') $('#paletteBtn').click();
+    else if (k === 's') $('#panel').classList.toggle('open');
+    else if (k === 'h' || k === '?') $('#keys').classList.toggle('hide');
+    else return;
+    syncUI(); onSettings(k);
+  });
+  // show the key list briefly on arrival
+  $('#keys').classList.remove('hide');
+  setTimeout(() => $('#keys').classList.add('hide'), 6000);
+}
 
 export function setStatus(text) { $('#status').textContent = text; }
 
@@ -119,7 +182,7 @@ async function detectStudio() {
     if (!('auth' in h)) return;
     studio.available = true;
     $('#studioLink').classList.remove('hide');
-    $('#studioOpts').classList.remove('hide');
+    if (!MEETING) $('#studioOpts').classList.remove('hide');
   } catch { /* static hosting: no studio, the page still works on its own */ }
 }
 

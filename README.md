@@ -50,6 +50,17 @@ Cameras only open over **HTTPS** (or on `localhost`); a phone pointed at `http:/
 
 Everything runs on the device: MediaPipe's selfie segmenter finds the person, and WebGL2 shaders port the effects, backgrounds, layouts, face modes, fringe and grain from `stylize.py`. Two things are approximated to run live: **depth** (estimated from the silhouette rather than Depth-Anything), and the voxel tiling (a quadtree rather than the greedy raster pass). For the exact look, turn on *Also keep the raw take* (studio only) and press *Render exact version in studio* after recording: the untouched camera take is uploaded, converted to constant-30-fps MP4, and rendered by `stylize.py` with the same settings.
 
+### In a real meeting (Zoom, Meet, Teams)
+
+Open `camera/?meeting` and feed it to the meeting app through a virtual camera. Meeting mode shows only the picture (unmirrored, at the webcam's own size), and you change styles with keys (`h` lists them). Settings are remembered, and can be preset in the URL: `camera/?meeting&effect=contour&bg=grid&face=clear`.
+
+With [OBS Studio](https://obsproject.com) (free, Windows/macOS/Linux):
+1. Open the meeting page in a browser window and press F11 for fullscreen (or just keep it on screen).
+2. In OBS, add a **Window Capture** source pointing at that window, then **Start Virtual Camera**.
+3. In Zoom / Meet / Teams, choose **OBS Virtual Camera** as the camera.
+
+On Linux the virtual camera needs the `v4l2loopback` kernel module (`v4l2loopback-dkms` on Arch, `v4l2loopback-dkms` on Debian/Ubuntu); OBS loads it when you start the virtual camera.
+
 Saving: on phones *Save to device* opens the share sheet (*Save Video* puts it in Photos); on desktops it downloads. Takes record as H.264 MP4 where the browser can (Chrome, Safari), else WebM.
 
 ## Deploy (Docker / IBM Cloud Code Engine)

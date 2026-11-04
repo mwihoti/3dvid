@@ -30,6 +30,15 @@ for (const [k, v] of params) {
   if (!(k in DEFAULTS) || k === 'keepRaw') continue;
   settings[k] = RANGES.includes(k) ? +v : CHECKS.includes(k) ? v !== '0' && v !== 'false' : v;
 }
+settings.studio = settings.studio.trim().replace(/\/+$/, '');
+// one link can carry the studio's token (the Kaggle notebook prints such a link);
+// keep it in localStorage like a typed one and take it out of the address bar, so
+// it is not left in history, bookmarks or anything the user copies
+if (params.has('token')) {
+  localStorage.setItem('token', params.get('token').trim());
+  params.delete('token');
+  history.replaceState(null, '', location.pathname + (params.size ? '?' + params : '') + location.hash);
+}
 function saveSettings() {
   const { keepRaw, ...rest } = settings;          // keepRaw is a per-take choice, not a preference
   if (MEETING) { delete rest.mirror; delete rest.layout; }   // meeting-only overrides must not leak into the normal page

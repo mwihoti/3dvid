@@ -63,6 +63,16 @@ On Linux the virtual camera needs the `v4l2loopback` kernel module (`v4l2loopbac
 
 Saving: on phones *Save to device* opens the share sheet (*Save Video* puts it in Photos); on desktops it downloads. Takes record as H.264 MP4 where the browser can (Chrome, Safari), else WebM.
 
+## Free GPU studio on Kaggle
+
+Kaggle can't host a server, but while a notebook runs it can expose the studio. `kaggle/3dvid.ipynb` has a **Studio server** section: it starts `serve.py` behind a Cloudflare quick tunnel and prints links that log you in:
+
+- **studio** — the full web UI (upload, options, progress, playback) with the T4 doing depth and mask;
+- **camera** — the live camera page served by that studio;
+- **from Pages** — the free camera page on GitHub Pages, connected to that studio, so *Render exact version in studio* works there.
+
+The links change every session, and the studio lives only while the notebook tab is open (12 h at most). Download renders before the session ends. The same `deploy/tunnel.sh` works on any box, and the camera page connects to any studio URL you paste in its *Studio URL* field (or `?studio=…&token=…` in the link); the server must allow that site with `CORS_ORIGINS=https://<your-pages-site>`.
+
 ## Deploy (Docker / IBM Cloud Code Engine)
 
 The `Dockerfile` builds a CPU image with all model weights baked in (~3 GB). Mutable state
@@ -119,7 +129,7 @@ bash deploy/tunnel.sh              # prints the https://...trycloudflare.com URL
 
 Current public URL: _(run `deploy/tunnel.sh` and paste the URL here; it changes on every restart)_
 
-Anyone with the URL still needs the token, but treat the URL as semi-private all the same.
+Anyone with the URL still needs the token, but treat the URL as semi-private all the same. The script prints links with `?token=…`; both pages store the token and drop it from the address bar on first open.
 
 ## Notes
 

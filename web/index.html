@@ -196,6 +196,13 @@ video{width:100%;border-radius:10px;margin-top:11px;background:#000;display:bloc
 const $ = s => document.querySelector(s);
 
 // ---- auth (only enforced when the server has AUTH_TOKEN set)
+// a link can carry the token (deploy/tunnel.sh and the Kaggle notebook print one);
+// keep it like a typed one and take it out of the address bar at once
+const _q = new URLSearchParams(location.search);
+if(_q.has('token')){
+  localStorage.setItem('token', _q.get('token').trim()); _q.delete('token');
+  history.replaceState(null, '', location.pathname + (_q.size ? '?' + _q : '') + location.hash);
+}
 let TOKEN = localStorage.getItem('token') || '';
 async function api(url, opts = {}){
   opts.headers = Object.assign({}, opts.headers || {}, TOKEN ? {Authorization: 'Bearer ' + TOKEN} : {});

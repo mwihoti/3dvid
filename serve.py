@@ -19,6 +19,7 @@ from typing import Dict, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _VENV_PY = os.path.join(HERE, "nunif", "venv", "bin", "python")
@@ -30,6 +31,10 @@ JOBS_FILE = os.path.join(DATA_DIR, "jobs.json")
 WEB = os.path.join(HERE, "web")
 os.environ.setdefault("STYLIZE_CACHE_DIR", os.path.join(DATA_DIR, ".stylize_cache"))  # inherited by stylize.py
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "").strip()  # empty = no auth (local / tunnel use)
+# Origins allowed to call the API from another site, e.g. the camera page on GitHub
+# Pages talking to a studio behind a tunnel. Comma-separated, or "*". Empty = same
+# origin only. The bearer token still applies; CORS only lets the browser ask.
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 
 
 def _has_cuda():
@@ -83,6 +88,9 @@ class Job:
 
 JOBS: Dict[str, Job] = {}
 app = FastAPI(title="3dvid studio")
+if CORS_ORIGINS:
+    app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["GET", "POST"],
+                       allow_headers=["Authorization", "Content-Type"], max_age=3600)
 
 
 def save_jobs():
@@ -119,7 +127,8 @@ load_jobs()
 async def require_token(request: Request, call_next):
     """Bearer-token gate for everything except the page itself and /api/health.
     Media URLs are loaded by <video>/<a> which cannot set headers, so ?token= is accepted too."""
-    if AUTH_TOKEN and (request.url.path.startswith("/api/") or request.url.path.startswith("/media/")) \
+    if AUTH_TOKEN and request.method != "OPTIONS" \
+       and (request.url.path.startswith("/api/") or request.url.path.startswith("/media/")) \
        and request.url.path != "/api/health":
         auth = request.headers.get("authorization", "")
         supplied = auth[7:].strip() if auth.lower().startswith("bearer ") else request.query_params.get("token", "")

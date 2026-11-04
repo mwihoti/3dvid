@@ -33,4 +33,4 @@ echo "token      : ${AUTH_TOKEN:-<unknown: not in the environment or .env>}"
 # links that log the browser in on first open (the pages drop the token from the address bar)
 echo "studio     : $url/?token=$AUTH_TOKEN"
 echo "camera     : $url/camera/?token=$AUTH_TOKEN"
-echo "from Pages : https://mwihoti.github.io/3dvid/?studio=$url&token=$AUTH_TOKEN   (needs CORS_ORIGINS=https://mwihoti.github.io on the server)"
+echo "from Pages : ${PAGES_URL:-https://mwihoti.github.io/3dvid}/?studio=$url&token=$AUTH_TOKEN   (needs CORS_ORIGINS=<that site> on the server)"

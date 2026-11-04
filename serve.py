@@ -417,7 +417,9 @@ def health():
         torch_version = torch.__version__
     except Exception:          # the web side runs without it; only the render subprocesses need it
         torch_version = None
-    return {"cuda": HAS_CUDA, "torch": torch_version,
+    # "app" lets a page on another site (the camera page on GitHub Pages, pointed at
+    # a tunnel URL) tell a 3dvid studio from any other server that answers /api/health
+    return {"app": "3dvid", "cuda": HAS_CUDA, "torch": torch_version,
             "auth": bool(AUTH_TOKEN), "cpus": os.cpu_count(),
             "note": ("GPU: ~1 min per 30s stylise render" if HAS_CUDA
                      else "CPU-only: ~8 min per 30s stylise render on 32 cores; scales with cores")}

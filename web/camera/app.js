@@ -193,20 +193,35 @@ async function api(path, opts = {}) {
   }
   return r;
 }
+const STUDIO_NOTE = $('#studioNote').innerHTML;
 async function detectStudio() {
   studio.available = false;
-  $('#studioLink').classList.add('hide');
+  const link = $('#studioLink'), note = $('#studioNote');
+  note.innerHTML = STUDIO_NOTE; note.style.color = '';
+  link.classList.add('hide');
   $('#studioOpts').classList.add('hide');
+  const base = studioBase();
   try {
-    const r = await fetch(new URL('api/health', studioBase()));
-    if (!r.ok) return;
+    const r = await fetch(new URL('api/health', base));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const h = await r.json();
-    if (h.app !== '3dvid' && !('auth' in h)) return;    // something else answered
+    if (h.app !== '3dvid' && !('auth' in h)) throw new Error('not a 3dvid studio');
     studio.available = true;
-    $('#studioLink').href = studioBase();
-    $('#studioLink').classList.remove('hide');
+    link.href = base;
+    // name the studio when it is not the server this page came from
+    link.textContent = settings.studio ? `Studio: ${new URL(base).host}${h.cuda ? ' · GPU' : ''} →` : 'Studio →';
+    link.classList.remove('hide');
     if (!MEETING) $('#studioOpts').classList.remove('hide');
-  } catch { /* static hosting with no studio set: the page still works on its own */ }
+    if (settings.studio) note.textContent = `Connected to ${new URL(base).host}${h.cuda ? ' (GPU)' : ''}.`;
+  } catch (e) {
+    // a typed studio that does not answer deserves a message (under the field, since
+    // the status pill is overwritten by the fps counter); static hosting with no
+    // studio set does not - the page works on its own
+    if (settings.studio) {
+      note.textContent = `${new URL(base).host} is not answering (${e.message}). Is it running, and started with CORS_ORIGINS for this site?`;
+      note.style.color = 'var(--err)';
+    }
+  }
 }
 
 // ---- render loop: one styled frame per camera frame

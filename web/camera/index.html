@@ -188,7 +188,7 @@ body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radi
        style="display:block" title="Opens a clean, unmirrored picture for OBS to capture as a virtual camera">Use in a meeting (OBS) →</a>
     <h2>Studio</h2>
     <input class="text" type="url" id="studioUrl" placeholder="Studio URL (optional)" autocomplete="off" spellcheck="false">
-    <div class="note">Leave empty when this page is served by the studio itself. Otherwise paste the URL the Kaggle
+    <div class="note" id="studioNote">Leave empty when this page is served by the studio itself. Otherwise paste the URL the Kaggle
       notebook or <code>deploy/tunnel.sh</code> prints, to render exact versions there.</div>
     <div id="studioOpts" class="hide">
       <label class="chk"><input type="checkbox" id="keepRaw">Also keep the raw take<span>for an exact studio render</span></label>

@@ -79,6 +79,9 @@ a.pill:hover{color:var(--ink);border-color:var(--cyan)}
 .ghost:hover{border-color:var(--cyan)}
 .small{font-size:12px;padding:7px 12px;width:100%;margin-top:8px}
 .note{font-size:11.5px;color:var(--dim);margin-top:10px}
+.text{width:100%;background:#070c18;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+  padding:8px 10px;font:inherit;font-size:12.5px}
+.text:focus{outline:none;border-color:var(--cyan)}
 .sheet{position:fixed;inset:0;z-index:30;background:rgba(5,7,15,.94);display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:12px;padding:20px;padding-bottom:max(20px,env(safe-area-inset-bottom))}
 .sheet video,.sheet img{max-width:min(100%,900px);max-height:58dvh;border-radius:12px;background:#000}
@@ -183,8 +186,11 @@ body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radi
     <button class="ghost small" id="paletteBtn">Re-sample voxel colours</button>
     <a class="ghost small" id="meetingLink" href="./?meeting" target="_blank" rel="opener"
        style="display:block" title="Opens a clean, unmirrored picture for OBS to capture as a virtual camera">Use in a meeting (OBS) →</a>
+    <h2>Studio</h2>
+    <input class="text" type="url" id="studioUrl" placeholder="Studio URL (optional)" autocomplete="off" spellcheck="false">
+    <div class="note">Leave empty when this page is served by the studio itself. Otherwise paste the URL the Kaggle
+      notebook or <code>deploy/tunnel.sh</code> prints, to render exact versions there.</div>
     <div id="studioOpts" class="hide">
-      <h2>Studio</h2>
       <label class="chk"><input type="checkbox" id="keepRaw">Also keep the raw take<span>for an exact studio render</span></label>
     </div>
     <div class="note">Styles run live on this device. Depth is approximated from your silhouette; the studio's

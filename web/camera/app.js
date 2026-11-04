@@ -10,6 +10,7 @@ const $ = s => document.querySelector(s);
 const DEFAULTS = {
   effect: 'voxel', bg: 'plasma', face: 'off', layout: 'wide', quality: '720', subjectX: '',
   bands: 12, minCell: 8, maxCell: 24, grain: 0, mirror: true, chroma: false, keepRaw: false,
+  studio: '',      // a studio elsewhere (tunnel URL); '' = the server this page came from, if any
 };
 const SEGS = ['effect', 'bg', 'face', 'layout', 'quality', 'subjectX'];
 const RANGES = ['bands', 'minCell', 'maxCell', 'grain'];
@@ -45,8 +46,15 @@ function syncUI() {
     inp.value = settings[id]; inp.nextElementSibling.value = settings[id];
   }
   for (const id of CHECKS) document.getElementById(id).checked = !!settings[id];
+  $('#studioUrl').value = settings.studio;
 }
 syncUI();
+$('#studioUrl').addEventListener('change', e => {
+  settings.studio = e.target.value.trim().replace(/\/+$/, '');
+  e.target.value = settings.studio;
+  onSettings('studio');
+  detectStudio();
+});
 
 document.querySelectorAll('.seg').forEach(seg => {
   seg.addEventListener('click', e => {
@@ -156,13 +164,15 @@ $('#startBtn').onclick = () => startCamera().then(() => {
   cam.classList.add('offscreen'); $('#out').classList.remove('hide'); startLoop();
 }).catch(e => setStatus(e.message));
 
-// ---- studio (only when this page is served by serve.py, not as a static site)
+// ---- studio: the server this page came from (serve.py), or one at settings.studio
 export const studio = { available: false };
+// base URL every API call is resolved against, always ending in a slash
+const studioBase = () => (settings.studio ? settings.studio + '/' : new URL('../', location.href).href);
 
 // same bearer-token handling as the studio page (shared localStorage key)
 let TOKEN = localStorage.getItem('token') || '';
 async function api(path, opts = {}) {
-  const url = new URL(path, location.href);
+  const url = new URL(path, studioBase());
   opts.headers = { ...(opts.headers || {}), ...(TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}) };
   let r = await fetch(url, opts);
   if (r.status === 401) {
@@ -175,15 +185,19 @@ async function api(path, opts = {}) {
   return r;
 }
 async function detectStudio() {
+  studio.available = false;
+  $('#studioLink').classList.add('hide');
+  $('#studioOpts').classList.add('hide');
   try {
-    const r = await fetch(new URL('../api/health', location.href));
+    const r = await fetch(new URL('api/health', studioBase()));
     if (!r.ok) return;
     const h = await r.json();
-    if (!('auth' in h)) return;
+    if (h.app !== '3dvid' && !('auth' in h)) return;    // something else answered
     studio.available = true;
+    $('#studioLink').href = studioBase();
     $('#studioLink').classList.remove('hide');
     if (!MEETING) $('#studioOpts').classList.remove('hide');
-  } catch { /* static hosting: no studio, the page still works on its own */ }
+  } catch { /* static hosting with no studio set: the page still works on its own */ }
 }
 
 // ---- render loop: one styled frame per camera frame
@@ -325,7 +339,7 @@ $('#hqBtn').onclick = async () => {
     const fd = new FormData();
     fd.append('file', new File([result.rawBlob], `camera-${stamp()}.${extFor(result.rawBlob.type)}`));
     fd.append('source', 'camera');
-    let r = await api('../api/upload', { method: 'POST', body: fd });
+    let r = await api('api/upload', { method: 'POST', body: fd });
     const up = await r.json();
     if (!r.ok) throw new Error(up.detail || 'upload failed');
 
@@ -335,14 +349,14 @@ $('#hqBtn').onclick = async () => {
       face_mode: settings.face, subject_x: settings.subjectX, bands: settings.bands, min_cell: settings.minCell, max_cell: settings.maxCell,
       preview: 0, keep_audio: true, chromatic: settings.chroma, grain: settings.grain,
     }).forEach(([k, v]) => job.append(k, v));
-    r = await api('../api/render', { method: 'POST', body: job });
+    r = await api('api/render', { method: 'POST', body: job });
     if (r.status === 409) {
-      status.innerHTML = `Uploaded as <b>${up.name}</b>. The studio is busy with another render; start this one from the <a href="../">studio</a>.`;
+      status.innerHTML = `Uploaded as <b>${up.name}</b>. The studio is busy with another render; start this one from the <a href="${studioBase()}" target="_blank">studio</a>.`;
       return;
     }
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || 'render failed to start');
-    status.innerHTML = `Rendering <b>${up.name}</b> in the studio - follow it on the <a href="../">studio page</a>.`;
+    status.innerHTML = `Rendering <b>${up.name}</b> in the studio - follow it on the <a href="${studioBase()}" target="_blank">studio page</a>.`;
   } catch (e) {
     status.textContent = 'Studio render failed: ' + e.message;
     btn.disabled = false;

@@ -30,12 +30,39 @@ for (const [k, v] of params) {
   if (!(k in DEFAULTS) || k === 'keepRaw') continue;
   settings[k] = RANGES.includes(k) ? +v : CHECKS.includes(k) ? v !== '0' && v !== 'false' : v;
 }
-settings.studio = settings.studio.trim().replace(/\/+$/, '');
+// A token belongs to one studio. The server this page came from shares the studio
+// page's 'token' key; a studio elsewhere gets a key of its own, so a link that names
+// another studio is never sent a token that was given for this one.
+const tokenKey = () => (settings.studio && settings.studio !== location.origin ? 'token:' + settings.studio : 'token');
+// What people really paste as a studio URL: no scheme, a trailing slash, a path, or one
+// of the printed links with ?token= in it. Reduce it to the origin (every API call is
+// resolved against that) and hand back the token it carried. null = not a URL.
+function parseStudio(v) {
+  v = String(v || '').trim();
+  if (!v) return { studio: '', token: '' };
+  if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
+  try {
+    const u = new URL(v);
+    // new URL accepts almost anything after https://; a studio is a hostname or an IP
+    if (!/^[a-z0-9.-]+$|^\[[0-9a-f:.]+\]$/i.test(u.hostname)) return null;
+    return { studio: u.origin, token: (u.searchParams.get('token') || '').trim() };
+  } catch { return null; }
+}
+let studioError = '';
+function setStudio(v) {
+  const p = parseStudio(v);
+  studioError = p ? '' : `"${String(v).trim()}" is not a URL. Paste the studio's https:// address.`;
+  settings.studio = p ? p.studio : '';
+  if (p && p.token) localStorage.setItem(tokenKey(), p.token);
+}
+setStudio(settings.studio);
 // one link can carry the studio's token (the Kaggle notebook prints such a link);
 // keep it in localStorage like a typed one and take it out of the address bar, so
 // it is not left in history, bookmarks or anything the user copies
 if (params.has('token')) {
-  localStorage.setItem('token', params.get('token').trim());
+  // a link that names no studio is the serving studio's own link: its token must not
+  // be filed under (and later sent to) another studio remembered from an earlier visit
+  localStorage.setItem(params.has('studio') ? tokenKey() : 'token', params.get('token').trim());
   params.delete('token');
   history.replaceState(null, '', location.pathname + (params.size ? '?' + params : '') + location.hash);
 }
@@ -59,8 +86,8 @@ function syncUI() {
 }
 syncUI();
 $('#studioUrl').addEventListener('change', e => {
-  settings.studio = e.target.value.trim().replace(/\/+$/, '');
-  e.target.value = settings.studio;
+  setStudio(e.target.value);
+  if (!studioError) e.target.value = settings.studio;
   onSettings('studio');
   detectStudio();
 });
@@ -178,20 +205,36 @@ export const studio = { available: false };
 // base URL every API call is resolved against, always ending in a slash
 const studioBase = () => (settings.studio ? settings.studio + '/' : new URL('../', location.href).href);
 
-// same bearer-token handling as the studio page (shared localStorage key)
-let TOKEN = localStorage.getItem('token') || '';
+// link to the studio page. A studio elsewhere is another origin with its own, empty
+// localStorage, so the link carries that studio's token, like the printed "studio" link
+// (the studio page stores it and takes it out of the address bar)
+const studioHref = () => {
+  const t = settings.studio ? localStorage.getItem(tokenKey()) : '';
+  return studioBase() + (t ? '?token=' + encodeURIComponent(t) : '');
+};
+// same bearer-token handling as the studio page, but the token is looked up per studio
 async function api(path, opts = {}) {
   const url = new URL(path, studioBase());
-  opts.headers = { ...(opts.headers || {}), ...(TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}) };
+  const key = tokenKey();
+  let token = localStorage.getItem(key) || '';
+  opts.headers = { ...(opts.headers || {}), ...(token ? { Authorization: 'Bearer ' + token } : {}) };
   let r = await fetch(url, opts);
   if (r.status === 401) {
-    const t = prompt('The studio needs its access token:');
+    const t = prompt(`${url.host} needs its access token:`);
     if (t === null) throw new Error('no token');
-    TOKEN = t.trim(); localStorage.setItem('token', TOKEN);
-    opts.headers.Authorization = 'Bearer ' + TOKEN;
+    token = t.trim(); localStorage.setItem(key, token);
+    $('#studioLink').href = studioHref();
+    opts.headers.Authorization = 'Bearer ' + token;
     r = await fetch(url, opts);
   }
   return r;
+}
+// status line with a name the server supplied and a link to the studio: built from
+// nodes, never innerHTML, so neither can inject markup into this page
+function studioStatus(el, before, name, mid, linkText) {
+  const b = document.createElement('b'); b.textContent = name;
+  const a = document.createElement('a'); a.href = studioHref(); a.target = '_blank'; a.rel = 'noopener'; a.textContent = linkText;
+  el.replaceChildren(before, b, mid, a, '.');
 }
 const STUDIO_NOTE = $('#studioNote').innerHTML;
 async function detectStudio() {
@@ -200,6 +243,7 @@ async function detectStudio() {
   note.innerHTML = STUDIO_NOTE; note.style.color = '';
   link.classList.add('hide');
   $('#studioOpts').classList.add('hide');
+  if (studioError) { note.textContent = studioError; note.style.color = 'var(--err)'; return; }
   const base = studioBase();
   try {
     const r = await fetch(new URL('api/health', base));
@@ -207,7 +251,7 @@ async function detectStudio() {
     const h = await r.json();
     if (h.app !== '3dvid' && !('auth' in h)) throw new Error('not a 3dvid studio');
     studio.available = true;
-    link.href = base;
+    link.href = studioHref();
     // name the studio when it is not the server this page came from
     link.textContent = settings.studio ? `Studio: ${new URL(base).host}${h.cuda ? ' · GPU' : ''} →` : 'Studio →';
     link.classList.remove('hide');
@@ -375,12 +419,12 @@ $('#hqBtn').onclick = async () => {
     }).forEach(([k, v]) => job.append(k, v));
     r = await api('api/render', { method: 'POST', body: job });
     if (r.status === 409) {
-      status.innerHTML = `Uploaded as <b>${up.name}</b>. The studio is busy with another render; start this one from the <a href="${studioBase()}" target="_blank">studio</a>.`;
+      studioStatus(status, 'Uploaded as ', up.name, '. The studio is busy with another render; start this one from the ', 'studio');
       return;
     }
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || 'render failed to start');
-    status.innerHTML = `Rendering <b>${up.name}</b> in the studio - follow it on the <a href="${studioBase()}" target="_blank">studio page</a>.`;
+    studioStatus(status, 'Rendering ', up.name, ' in the studio - follow it on the ', 'studio page');
   } catch (e) {
     status.textContent = 'Studio render failed: ' + e.message;
     btn.disabled = false;

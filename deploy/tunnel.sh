@@ -10,6 +10,7 @@ PORT=${PORT:-8000}
 if [ -z "${AUTH_TOKEN:-}" ] && [ -f .env ]; then
   AUTH_TOKEN=$(grep '^AUTH_TOKEN=' .env | cut -d= -f2- || true)
 fi
+AUTH_TOKEN=${AUTH_TOKEN:-}
 BIN=${CLOUDFLARED:-$HOME/.local/bin/cloudflared}
 if [ ! -x "$BIN" ]; then
   mkdir -p "$(dirname "$BIN")"
@@ -22,7 +23,9 @@ fi
 : > tunnel.log
 "$BIN" tunnel --url "http://localhost:$PORT" --no-autoupdate --protocol http2 >> tunnel.log 2>&1 &
 for _ in $(seq 1 30); do
-  url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1 || true)
+  # not api.trycloudflare.com: cloudflared names that endpoint in its error line when
+  # the tunnel request fails, and it must not be mistaken for the tunnel's own URL
+  url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | grep -v '^https://api\.' | head -1 || true)
   [ -n "$url" ] && break; sleep 1
 done
 if [ -z "$url" ]; then
@@ -31,6 +34,9 @@ fi
 echo "public URL : $url"
 echo "token      : ${AUTH_TOKEN:-<unknown: not in the environment or .env>}"
 # links that log the browser in on first open (the pages drop the token from the address bar)
-echo "studio     : $url/?token=$AUTH_TOKEN"
-echo "camera     : $url/camera/?token=$AUTH_TOKEN"
-echo "from Pages : ${PAGES_URL:-https://mwihoti.github.io/3dvid}/?studio=$url&token=$AUTH_TOKEN   (needs CORS_ORIGINS=<that site> on the server)"
+if [ -n "$AUTH_TOKEN" ]; then
+  pages=${PAGES_URL:-https://mwihoti.github.io/3dvid}; pages=${pages%/}
+  echo "studio     : $url/?token=$AUTH_TOKEN"
+  echo "camera     : $url/camera/?token=$AUTH_TOKEN"
+  echo "from Pages : $pages/?studio=$url&token=$AUTH_TOKEN   (needs CORS_ORIGINS=$(echo "$pages" | cut -d/ -f1-3) in the server's environment; restart serve.py after adding it)"
+fi

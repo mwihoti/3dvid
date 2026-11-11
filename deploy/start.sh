@@ -14,9 +14,19 @@ if ! pgrep -x cloudflared >/dev/null; then
   tmux new-session -d -s tunnel "set -a; . ./.env; set +a; bash deploy/tunnel.sh; sleep infinity"
   for _ in $(seq 1 60); do grep -q "Registered tunnel connection" tunnel.log 2>/dev/null && break; sleep 1; done
 fi
-url=$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" tunnel.log | head -1)
+url=$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" tunnel.log | grep -v '^https://api\.' | head -1)
 echo "$url" > public_url.txt
 echo "studio : $(curl -s --max-time 2 http://127.0.0.1:8000/api/health >/dev/null && echo up || echo DOWN)"
 echo "tunnel : $(grep -q "Registered tunnel connection" tunnel.log && echo registered || echo NOT registered)"
+# this script never restarts a healthy server, so a CORS_ORIGINS added to .env later is not picked up
+# (probe with the origin as serve.py normalises it; judge only a server that answered; no
+# curl | grep -q, which fails at random under pipefail when grep exits before curl is done)
+if [ -n "${CORS_ORIGINS:-}" ]; then
+  origin=$(printf %s "${CORS_ORIGINS%%,*}" | tr -d ' ' | tr 'A-Z' 'a-z' | cut -d/ -f1-3)
+  hdrs=$(curl -s --max-time 2 -o /dev/null -D - -H "Origin: $origin" http://127.0.0.1:8000/api/health)
+  if [ -n "$hdrs" ] && ! grep -qi '^access-control-allow-origin' <<<"$hdrs"; then
+    echo "CORS   : .env sets CORS_ORIGINS but the running server was started without it - restart it: tmux kill-session -t studio; bash deploy/start.sh"
+  fi
+fi
 echo "URL    : $url"
 echo "token  : $AUTH_TOKEN"

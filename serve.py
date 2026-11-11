@@ -15,6 +15,7 @@ State is in-memory - this is a single-user local tool, not a service.
 import asyncio, json, os, re, shutil, signal, subprocess, sys, time, uuid
 from dataclasses import dataclass, field
 from typing import Dict, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -34,7 +35,14 @@ AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "").strip()  # empty = no auth (local 
 # Origins allowed to call the API from another site, e.g. the camera page on GitHub
 # Pages talking to a studio behind a tunnel. Comma-separated, or "*". Empty = same
 # origin only. The bearer token still applies; CORS only lets the browser ask.
-CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+def _origin(o: str) -> str:
+    """A browser's Origin header is scheme://host[:port] and CORSMiddleware compares it
+    exactly, so reduce a pasted site URL (path, trailing slash) to that. "*" passes through."""
+    u = urlsplit(o)
+    return f"{u.scheme}://{u.netloc}".lower() if u.scheme and u.netloc else o
+
+
+CORS_ORIGINS = [_origin(o.strip()) for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 
 
 def _has_cuda():
@@ -88,9 +96,6 @@ class Job:
 
 JOBS: Dict[str, Job] = {}
 app = FastAPI(title="3dvid studio")
-if CORS_ORIGINS:
-    app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["GET", "POST"],
-                       allow_headers=["Authorization", "Content-Type"], max_age=3600)
 
 
 def save_jobs():
@@ -135,6 +140,14 @@ async def require_token(request: Request, call_next):
         if supplied != AUTH_TOKEN:
             return JSONResponse({"detail": "unauthorized"}, status_code=401)
     return await call_next(request)
+
+
+# Added after the token gate on purpose: the last middleware added is the outermost, so
+# CORS wraps the gate and its 401 carries Access-Control-Allow-Origin too. Without that a
+# page on another origin sees "Failed to fetch" instead of a 401 and never asks for the token.
+if CORS_ORIGINS:
+    app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["GET", "POST"],
+                       allow_headers=["Authorization", "Content-Type"], max_age=3600)
 
 
 def _safe_name(name: str) -> str:

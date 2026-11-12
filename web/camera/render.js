@@ -1,11 +1,13 @@
 // Per-frame GPU pipeline: camera -> composite (layout + background) -> canvas.
 import { createGL, Pass, Target, texture, uploadImage, uploadR8 } from './gl.js';
 import * as S from './shaders.js';
+import { EFFECTS } from './effects.js';
 
 // same canvases as stylize.py's LAYOUTS: (width, height, subject centre as a fraction of width)
 const LAYOUTS = { wide: [1920, 1080, 0.72], portrait: [1080, 1920, 0.50], square: [1080, 1080, 0.50] };
 const BG = { plasma: 0, grid: 1, dark: 2, filmed: 3, source: 4 };
-const EFFECT = { voxel: 0, contour: 1, both: 2, clean: 3 };
+// an effect's index in EFFECTS is the FX shader's uEffect
+const EFFECT = Object.fromEntries(EFFECTS.map((e, i) => [e.id, i]));
 const FACE = { off: 0, clear: 1, only: 2 };
 const FACE_PAD = 0.05;       // the studio's default chin/beard slack, in person heights
 const FX_LONG_SIDE = 1280;   // effects run at camera resolution, capped for 1080p+ cameras
@@ -16,6 +18,35 @@ export function layoutDims(layout, quality, vw, vh) {
   const k = Math.min(1, +quality / Math.min(W, H));     // 720p -> 1280x720, 720x1280, 720x720
   const even = v => Math.round(v * k / 2) * 2;
   return [even(W), even(H), ax];
+}
+
+// ASCII glyph atlas: the ramp's glyphs side by side, white on black, sorted by how
+// much ink each really has in the font the browser picked (fonts disagree on whether
+// '%' or '#' is denser). Drawn once; mipmapped, since cells are a fraction of its size.
+function glyphAtlas() {
+  const n = S.GLYPHS.length, W = S.GLYPH_W, H = S.GLYPH_H;
+  let cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(W * n, H) : null;
+  let ctx = cv?.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {                       // OffscreenCanvas without 2D (older Safari), or none at all
+    cv = document.createElement('canvas'); cv.width = W * n; cv.height = H;
+    ctx = cv.getContext('2d', { willReadFrequently: true });
+  }
+  ctx.font = `bold ${Math.round(H * 0.82)}px ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const draw = glyphs => {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W * n, H);
+    ctx.fillStyle = '#fff';
+    [...glyphs].forEach((g, i) => ctx.fillText(g, W * (i + 0.5), H * 0.54));
+  };
+  draw(S.GLYPHS);
+  const px = ctx.getImageData(0, 0, W * n, H).data;
+  const ink = [...S.GLYPHS].map((g, i) => {
+    let s = 0;
+    for (let y = 0; y < H; y++) for (let x = i * W; x < (i + 1) * W; x++) s += px[(y * W * n + x) * 4];
+    return s;
+  });
+  draw([...S.GLYPHS].map((g, i) => [g, ink[i]]).sort((a, b) => a[1] - b[1]).map(e => e[0]).join(''));
+  return cv;
 }
 
 export class Renderer {
@@ -31,13 +62,17 @@ export class Renderer {
     this.edges = new Target(gl, true).resize(1, 1);   // mipmapped: bloom/rim are its blurred levels
     this.fx = new Target(gl, true);      // mipmapped: the filmed-FX background blurs it
     this.comp = new Target(gl);
+    this.glyphs = texture(gl, true);
+    uploadImage(gl, this.glyphs, glyphAtlas(), true);
   }
 
-  // seg: a Segmenter (or null while it loads); t: seconds, drives the animated backgrounds
-  // palette: Float32Array(72) from buildPalette
+  // video: any frame source texImage2D takes - a <video>, canvas, ImageBitmap or a
+  // WebCodecs VideoFrame; seg: a Segmenter (or null while it loads); t: seconds, drives
+  // the animated backgrounds and effects; palette: Float32Array(72) from buildPalette
   frame({ video, settings, seg, t, palette }) {
     const gl = this.gl;
-    const vw = video.videoWidth, vh = video.videoHeight;
+    const vw = video.videoWidth ?? video.displayWidth ?? video.width;
+    const vh = video.videoHeight ?? video.displayHeight ?? video.height;
     if (!vw || !vh) return false;
     const [CW, CH, layoutAx] = layoutDims(settings.layout, settings.quality, vw, vh);
     const ax = settings.subjectX === '' ? layoutAx : +settings.subjectX;   // '' = the layout's default
@@ -67,8 +102,8 @@ export class Renderer {
     }
     this.fxPass.use()
       .tex('uVideo', this.video).tex('uMask', this.mask).tex('uEdge', this.edges.tex)
-      .i('uHasMask', hasMask ? 1 : 0)
-      .i('uMirror', settings.mirror ? 1 : 0).f('uSrc', FW, FH).i('uEffect', EFFECT[settings.effect])
+      .tex('uGlyphs', this.glyphs).i('uHasMask', hasMask ? 1 : 0).f('uTime', t)
+      .i('uMirror', settings.mirror ? 1 : 0).f('uSrc', FW, FH).i('uEffect', EFFECT[settings.effect] ?? 0)
       .f('uPerson', st ? st.top : 0, st ? st.faceBottom : 0, st ? 1 : 0)
       .v3('uPal', palette).f('uMinCell', minC).f('uMaxCell', maxC).f('uTopCell', top).f('uCamPerFx', vw / FW)
       .draw(this.fx);

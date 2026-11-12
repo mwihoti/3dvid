@@ -3,8 +3,9 @@
 // of the clusters and skin goes flat.
 const K = 24, SAMPLES = 4000, FG_SHARE = 0.7, ITERS = 12;
 
-const work = document.createElement('canvas');
-const ctx = work.getContext('2d', { willReadFrequently: true });
+// created on first use, so importing this module needs no DOM (a worker, or a
+// browser-extension content script that may never build a palette)
+let work = null, ctx = null;
 
 // small seeded PRNG, so "re-sample colours" on the same frame gives the same palette
 function mulberry32(a) {
@@ -16,11 +17,17 @@ function mulberry32(a) {
   };
 }
 
-// video: the camera <video>; seg: a Segmenter with a person in frame, or null
+// video: the camera <video>, or a VideoFrame / ImageBitmap / canvas;
+// seg: a Segmenter with a person in frame (or anything with mask, w, h), or null
 // returns Float32Array(K * 3), colours in 0..1
 export function buildPalette(video, seg) {
-  const vw = video.videoWidth, vh = video.videoHeight;
+  const vw = video.videoWidth ?? video.displayWidth ?? video.width;
+  const vh = video.videoHeight ?? video.displayHeight ?? video.height;
   const W = 160, H = Math.max(1, Math.round(W * vh / vw));
+  if (!ctx) {
+    work = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(W, H) : document.createElement('canvas');
+    ctx = work.getContext('2d', { willReadFrequently: true });
+  }
   work.width = W; work.height = H;
   ctx.drawImage(video, 0, 0, W, H);
   const px = ctx.getImageData(0, 0, W, H).data;

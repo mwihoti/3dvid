@@ -8,12 +8,20 @@ const MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/'
 const LONG_SIDE = 256;   // the model runs at 256x256 anyway; feeding it more only costs readback
 const FG = 89;           // 0.35 * 255, the threshold stylize.py uses for "person"
 
+// frame size of anything drawImage takes: <video>, VideoFrame, ImageBitmap, canvas
+const sizeOf = s => [s.videoWidth ?? s.displayWidth ?? s.width, s.videoHeight ?? s.displayHeight ?? s.height];
+
 export class Segmenter {
-  static async create() {
-    const { FilesetResolver, ImageSegmenter } = await import(`${CDN}/vision_bundle.mjs`);
-    const files = await FilesetResolver.forVisionTasks(`${CDN}/wasm`);
+  // base: where vision_bundle.mjs and wasm/ live; model: the .tflite URL. Defaults are
+  // the CDN. simdOnly skips FilesetResolver's SIMD probe and loads the SIMD build
+  // directly, for a copy that ships only that one (the browser extension's vendor/).
+  static async create({ base = CDN, model = MODEL, simdOnly = false } = {}) {
+    const { FilesetResolver, ImageSegmenter } = await import(`${base}/vision_bundle.mjs`);
+    const files = simdOnly
+      ? { wasmLoaderPath: `${base}/wasm/vision_wasm_internal.js`, wasmBinaryPath: `${base}/wasm/vision_wasm_internal.wasm` }
+      : await FilesetResolver.forVisionTasks(`${base}/wasm`);
     const opts = delegate => ({
-      baseOptions: { modelAssetPath: MODEL, delegate },
+      baseOptions: { modelAssetPath: model, delegate },
       runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false,
     });
     let seg;
@@ -24,7 +32,7 @@ export class Segmenter {
 
   constructor(seg) {
     this.seg = seg;
-    this.canvas = document.createElement('canvas');
+    this.canvas = typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(1, 1);
     this.ctx = this.canvas.getContext('2d');
     this.w = 0; this.h = 0;
     this.mask = null;        // Uint8Array w*h, row 0 = top, camera (unmirrored) space
@@ -33,8 +41,9 @@ export class Segmenter {
     this.stats = { present: false };
   }
 
+  // video: a <video>, VideoFrame, ImageBitmap or canvas
   update(video, tsMs) {
-    const vw = video.videoWidth, vh = video.videoHeight;
+    const [vw, vh] = sizeOf(video);
     const k = LONG_SIDE / Math.max(vw, vh);
     const w = Math.max(1, Math.round(vw * k)), h = Math.max(1, Math.round(vh * k));
     if (w !== this.w || h !== this.h) {

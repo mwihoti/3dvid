@@ -1,0 +1,27 @@
+{
+  "id": "3dvid-camera",
+  "start_url": "./",
+  "scope": "./",
+  "name": "3dvid camera",
+  "short_name": "3dvid",
+  "description": "Live voxel, neon and other styles on your camera: record, take photos, or use the styled picture in a meeting. Runs on this device.",
+  "display": "standalone",
+  "background_color": "#05070f",
+  "theme_color": "#05070f",
+  "orientation": "any",
+  "categories": ["photo", "entertainment", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Meeting mode",
+      "short_name": "Meeting",
+      "description": "Only the styled picture, for OBS to capture as a virtual camera",
+      "url": "./?meeting",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

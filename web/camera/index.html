@@ -4,8 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#05070f">
+<!-- this page styles its own camera: the 3dvid browser extension must hand it the raw one -->
+<meta name="3dvid-styles-own-camera">
 <title>3dvid camera</title>
-<link rel="icon" href="data:,">
+<meta name="description" content="Live voxel, neon and other styles on your camera, right in the browser.">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<!-- iOS ignores most of the manifest: these make "Add to Home Screen" open full screen -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="3dvid">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
 :root{
   --bg:#05070f; --panel:#0b1020; --line:#1d2748; --ink:#e7ecff; --dim:#8f9bc4;
@@ -23,13 +33,18 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
   .panel.open{transform:none}
 }
 .top{grid-area:top;display:flex;align-items:center;gap:10px;padding:10px 14px;
-  padding-top:max(10px,env(safe-area-inset-top))}
-.top h1{margin:0;font-size:16px;flex:1}
+  padding-top:max(10px,env(safe-area-inset-top));min-width:0}
+.top h1{margin:0;font-size:16px;flex:1;white-space:nowrap}
+/* on a narrow phone the status gives way, so the header never scrolls sideways (the
+   min-width:0 above stops the header's full width from widening the 1fr grid column) */
+#status{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .top h1 span{background:linear-gradient(90deg,var(--orange),var(--pink) 55%,#8a2bff);
   -webkit-background-clip:text;background-clip:text;color:transparent}
 .pill{font-size:11.5px;color:var(--dim);border:1px solid var(--line);border-radius:99px;
   padding:4px 10px;text-decoration:none;white-space:nowrap}
 a.pill:hover{color:var(--ink);border-color:var(--cyan)}
+button.pill{background:transparent;font:inherit;font-size:11.5px;cursor:pointer;color:var(--cyan);border-color:rgba(57,198,255,.55)}
+button.pill:hover{color:var(--ink);border-color:var(--cyan)}
 .stage{grid-area:stage;position:relative;display:flex;align-items:center;justify-content:center;
   min-height:0;padding:0 10px;overflow:hidden}
 .stage canvas,.stage video{max-width:100%;max-height:100%;border-radius:12px;background:#000;
@@ -58,11 +73,15 @@ a.pill:hover{color:var(--ink);border-color:var(--cyan)}
 .panel{grid-area:panel;background:linear-gradient(180deg,var(--panel),#080d1a);border-left:1px solid var(--line);
   padding:14px 16px 24px;overflow:auto}
 .panel h2{margin:16px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:1.4px;color:var(--dim)}
-.panel h2:first-child{margin-top:2px}
+.panel > h2:first-of-type{margin-top:2px}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg button{flex:1 1 auto;min-width:58px;background:#070c18;color:var(--dim);border:1px solid var(--line);
   border-radius:9px;padding:8px 6px;font:inherit;font-size:12.5px;cursor:pointer}
 .seg button:hover{color:var(--ink)}
+/* eleven effects: an even grid instead of a ragged flex row */
+#effect{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:860px) and (min-width:560px){#effect{grid-template-columns:repeat(6,minmax(0,1fr))}}
+#effect button{min-width:0;padding:8px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .seg button[aria-pressed=true]{background:linear-gradient(180deg,#182248,#0e1530);color:var(--ink);
   border-color:var(--cyan);box-shadow:0 0 0 1px rgba(57,198,255,.25),0 0 18px -6px var(--cyan)}
 .range{display:grid;grid-template-columns:86px 1fr 34px;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin:6px 0}
@@ -100,6 +119,16 @@ body.meeting .panel{position:fixed;right:0;top:0;bottom:0;width:330px;z-index:20
 body.meeting .panel.open{transform:none}
 body.meeting .stage{padding:0}
 body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radius:0;box-shadow:none;max-width:none;max-height:none}
+/* viewport-fit=cover puts the page under the notch and home bar (installed app, phones in
+   landscape): keep the controls clear of them; env() is 0 where there is nothing to avoid */
+.top,.dock{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right))}
+.panel{padding-right:max(16px,env(safe-area-inset-right))}
+@media(max-width:860px){.panel{padding-left:max(16px,env(safe-area-inset-left));padding-bottom:max(24px,env(safe-area-inset-bottom))}}
+.sheet{padding-top:max(20px,env(safe-area-inset-top))}
+body.meeting .panel{padding-top:max(14px,env(safe-area-inset-top));padding-bottom:max(24px,env(safe-area-inset-bottom))}
+.steps{margin:8px 0 0;padding-left:20px;font-size:12px;color:var(--dim)}
+.steps li{margin:3px 0}
+.steps b,.steps code{color:var(--ink)}
 .hide{display:none!important}
 /* the camera <video> must keep decoding frames: iOS stops updating display:none videos */
 .offscreen{position:fixed!important;left:0;top:0;width:2px!important;height:2px!important;opacity:0;pointer-events:none}
@@ -109,6 +138,7 @@ body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radi
 <div class="app">
   <header class="top">
     <h1><span>3dvid</span> camera</h1>
+    <button id="installBtn" class="pill hide" title="Install as an app: own window, works offline">Install</button>
     <a id="studioLink" class="pill hide" href="../">Studio →</a>
     <div class="pill" id="status">starting…</div>
   </header>
@@ -123,7 +153,7 @@ body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radi
     <div class="rec-badge hide" id="recBadge"><i></i><span id="recTime">0:00</span></div>
     <div class="hint hide" id="hint">Step into the frame</div>
     <div class="keys hide" id="keys">
-      <b>1</b>voxel <b>2</b>neon <b>3</b>both <b>4</b>clean<br>
+      <span id="effectKeys"></span><br>
       <b>q</b>plasma <b>w</b>grid <b>e</b>dark <b>r</b>filmed <b>t</b>filmed FX<br>
       <b>f</b>face mode <b>m</b>mirror <b>c</b>fringe <b>g</b>grain <b>p</b>colours<br>
       <b>s</b>settings panel <b>h</b>this help
@@ -138,13 +168,9 @@ body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radi
   </div>
 
   <aside class="panel" id="panel">
+    <div class="note hide" id="iosHint" style="margin:0 0 12px">Install as an app: tap <b>Share</b>, then <b>Add to Home Screen</b>.</div>
     <h2>Effect</h2>
-    <div class="seg" id="effect">
-      <button data-v="voxel" aria-pressed="true">Voxel</button>
-      <button data-v="contour" aria-pressed="false">Neon</button>
-      <button data-v="both" aria-pressed="false">Both</button>
-      <button data-v="clean" aria-pressed="false">Clean</button>
-    </div>
+    <div class="seg" id="effect"><!-- buttons built by app.js from effects.js --></div>
     <h2>Background</h2>
     <div class="seg" id="bg">
       <button data-v="plasma" aria-pressed="true">Plasma</button>
@@ -183,15 +209,28 @@ body.meeting .stage canvas{width:100%;height:100%;object-fit:contain;border-radi
     <label class="range">Grain<input type="range" id="grain" min="0" max="12" value="0"><output>0</output></label>
     <label class="chk"><input type="checkbox" id="mirror" checked>Mirror<span>like a selfie</span></label>
     <label class="chk"><input type="checkbox" id="chroma">Chromatic fringe</label>
-    <button class="ghost small" id="paletteBtn">Re-sample voxel colours</button>
+    <button class="ghost small" id="paletteBtn">Re-sample palette colours</button>
     <a class="ghost small" id="meetingLink" href="./?meeting" target="_blank" rel="opener"
        style="display:block" title="Opens a clean, unmirrored picture for OBS to capture as a virtual camera">Use in a meeting (OBS) →</a>
+    <!-- shown only where the zip is published next to this page (GitHub Pages) -->
+    <section id="extBlock" class="hide">
+      <h2>Browser extension</h2>
+      <div class="note" style="margin-top:0">Use these effects in Meet, Teams and Zoom on the web, with the 3dvid
+        camera extension for Chrome.</div>
+      <a class="ghost small" id="extLink" href="./3dvid-camera-extension.zip" download style="display:block">Download the extension (.zip)</a>
+      <ol class="steps">
+        <li>Unzip it.</li>
+        <li>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b>.</li>
+        <li><b>Load unpacked</b> and pick the unzipped folder.</li>
+      </ol>
+    </section>
     <h2>Studio</h2>
     <input class="text" type="url" id="studioUrl" placeholder="Studio URL (optional)" autocomplete="off" spellcheck="false">
     <div class="note" id="studioNote">Leave empty when this page is served by the studio itself. Otherwise paste the URL the Kaggle
       notebook or <code>deploy/tunnel.sh</code> prints, to render exact versions there.</div>
     <div id="studioOpts" class="hide">
       <label class="chk"><input type="checkbox" id="keepRaw">Also keep the raw take<span>for an exact studio render</span></label>
+      <div class="note hide" id="liveOnlyNote"></div>
     </div>
     <div class="note">Styles run live on this device. Depth is approximated from your silhouette; the studio's
       exact render uses a real depth model.</div>

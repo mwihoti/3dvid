@@ -3,6 +3,7 @@ import { Renderer } from './render.js';
 import { Segmenter } from './segment.js';
 import { buildPalette } from './palette.js';
 import { Recorder, saveToDevice, extFor, stamp } from './recorder.js';
+import { EFFECTS, effectIndex, isStudioEffect } from './effects.js';
 
 const $ = s => document.querySelector(s);
 
@@ -30,6 +31,8 @@ for (const [k, v] of params) {
   if (!(k in DEFAULTS) || k === 'keepRaw') continue;
   settings[k] = RANGES.includes(k) ? +v : CHECKS.includes(k) ? v !== '0' && v !== 'false' : v;
 }
+// an effect saved by (or linked from) another version of the page may not exist here
+if (effectIndex(settings.effect) < 0) settings.effect = DEFAULTS.effect;
 // A token belongs to one studio. The server this page came from shares the studio
 // page's 'token' key; a studio elsewhere gets a key of its own, so a link that names
 // another studio is never sent a token that was given for this one.
@@ -71,6 +74,24 @@ function saveSettings() {
   if (MEETING) { delete rest.mirror; delete rest.layout; }   // meeting-only overrides must not leak into the normal page
   localStorage.setItem('camSettings', JSON.stringify(rest));
 }
+// the effect buttons come from the shared list, so the page, the meeting keys and
+// any other UI agree on what exists
+$('#effect').replaceChildren(...EFFECTS.map(e => {
+  const b = document.createElement('button');
+  b.dataset.v = e.id; b.textContent = e.label; b.setAttribute('aria-pressed', 'false');
+  if (!e.studio) b.title = 'Live only: the studio cannot render this effect';
+  return b;
+}));
+const STUDIO_EFFECTS = EFFECTS.filter(e => e.studio).map(e => e.label);
+const STUDIO_LIST = STUDIO_EFFECTS.slice(0, -1).join(', ') + ' and ' + STUDIO_EFFECTS.at(-1);
+const effectLabel = id => EFFECTS[effectIndex(id)]?.label || id;
+// the raw take only helps with an effect the studio has; say so next to the option
+function syncLiveOnly() {
+  const live = !isStudioEffect(settings.effect);
+  $('#liveOnlyNote').textContent = live
+    ? `The studio renders ${STUDIO_LIST}; ${effectLabel(settings.effect)} is live only.` : '';
+  $('#liveOnlyNote').classList.toggle('hide', !live);
+}
 // push `settings` into the controls (after loading, and after a keyboard shortcut)
 function syncUI() {
   for (const id of SEGS) {
@@ -83,6 +104,7 @@ function syncUI() {
   }
   for (const id of CHECKS) document.getElementById(id).checked = !!settings[id];
   $('#studioUrl').value = settings.studio;
+  syncLiveOnly();
 }
 syncUI();
 $('#studioUrl').addEventListener('change', e => {
@@ -118,19 +140,36 @@ document.addEventListener('pointerdown', e => {          // tap outside closes t
 const listeners = [];
 export const onSettingsChange = fn => listeners.push(fn);
 function onSettings(key) { saveSettings(); listeners.forEach(fn => fn(key)); }
+onSettingsChange(key => { if (key === 'effect') syncLiveOnly(); });
 
 // ---- meeting mode: keyboard shortcuts, since the controls are hidden
+// digits 1-9, 0 pick the first ten effects; n / b step through all of them
 const KEYS = {
-  '1': ['effect', 'voxel'], '2': ['effect', 'contour'], '3': ['effect', 'both'], '4': ['effect', 'clean'],
   'q': ['bg', 'plasma'], 'w': ['bg', 'grid'], 'e': ['bg', 'dark'], 'r': ['bg', 'filmed'], 't': ['bg', 'source'],
 };
+const DIGITS = '1234567890';
+const stepEffect = d => EFFECTS[(effectIndex(settings.effect) + d + EFFECTS.length) % EFFECTS.length].id;
 const FACE_CYCLE = ['off', 'clear', 'only'];
 if (MEETING) {
   document.body.classList.add('meeting');
+  // key list for the effects, built from the same list (the rest is static in the page)
+  const row = list => list.flatMap(([key, label]) => {
+    const b = document.createElement('b'); b.textContent = key;
+    return [b, label + ' '];
+  });
+  const digitKeys = EFFECTS.slice(0, DIGITS.length).map((e, i) => [DIGITS[i], e.label.toLowerCase()]);
+  $('#effectKeys').replaceChildren(...row(digitKeys.slice(0, 5)), document.createElement('br'),
+    ...row(digitKeys.slice(5)), document.createElement('br'), ...row([['n', 'next effect'], ['b', 'previous']]));
   document.addEventListener('keydown', ev => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    // typing in the panel (the studio URL) is text, not shortcuts
+    if (ev.target instanceof Element && ev.target.closest('input, textarea, select, [contenteditable]')) return;
     const k = ev.key.toLowerCase();
-    if (KEYS[k]) [settings[KEYS[k][0]]] = [KEYS[k][1]];
+    const digit = DIGITS.indexOf(k);
+    if (k.length === 1 && digit >= 0 && digit < EFFECTS.length) settings.effect = EFFECTS[digit].id;
+    else if (k === 'n') settings.effect = stepEffect(1);
+    else if (k === 'b') settings.effect = stepEffect(-1);
+    else if (KEYS[k]) [settings[KEYS[k][0]]] = [KEYS[k][1]];
     else if (k === 'f') settings.face = FACE_CYCLE[(FACE_CYCLE.indexOf(settings.face) + 1) % 3];
     else if (k === 'm') settings.mirror = !settings.mirror;
     else if (k === 'c') settings.chroma = !settings.chroma;
@@ -139,11 +178,61 @@ if (MEETING) {
     else if (k === 's') $('#panel').classList.toggle('open');
     else if (k === 'h' || k === '?') $('#keys').classList.toggle('hide');
     else return;
-    syncUI(); onSettings(k);
+    syncUI(); onSettings(digit >= 0 || k === 'n' || k === 'b' ? 'effect' : k);
   });
   // show the key list briefly on arrival
   $('#keys').classList.remove('hide');
   setTimeout(() => $('#keys').classList.add('hide'), 6000);
+}
+
+// ---- installable app: manifest.json + sw.js (offline, and the person model cached)
+const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+// next to this module, so the worker's scope is this directory: /3dvid/ on GitHub
+// Pages, /camera/ under serve.py (where /api/ and /media/ stay outside it)
+const swReady = 'serviceWorker' in navigator && window.isSecureContext
+  ? navigator.serviceWorker.register(new URL('./sw.js', import.meta.url).href)
+      .catch(e => { console.warn('service worker not registered', e); return null; })
+  : Promise.resolve(null);
+// MediaPipe files loaded before the worker took control (the first visit) went past
+// it; hand their URLs over so the person model works offline after this visit too
+async function cacheMediaPipe() {
+  if (!(await swReady)) return;
+  const reg = await navigator.serviceWorker.ready;
+  const urls = performance.getEntriesByType('resource').map(e => e.name)
+    .filter(u => u.includes('/@mediapipe/tasks-vision@') || u.includes('/mediapipe-models/'));
+  if (urls.length) reg.active?.postMessage({ cacheMediaPipe: urls });
+}
+let installPrompt = null;
+if (!MEETING && !STANDALONE) {
+  // Chromium offers installing; keep its event for our own button rather than its banner
+  addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    installPrompt = e;
+    $('#installBtn').classList.remove('hide');
+  });
+  addEventListener('appinstalled', () => { installPrompt = null; $('#installBtn').classList.add('hide'); });
+  $('#installBtn').onclick = async () => {
+    if (!installPrompt) return;
+    const p = installPrompt;
+    installPrompt = null;               // a prompt can only be shown once
+    $('#installBtn').classList.add('hide');
+    await p.prompt();
+  };
+  // iOS has no install prompt at all; it only installs from the share sheet
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent)
+    || (navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1);   // iPadOS claims to be a Mac
+  $('#iosHint').classList.toggle('hide', !ios);
+}
+// the browser-extension download: only where the zip is published next to this page
+// (the GitHub Pages build adds it; serve.py has none, and offline nothing shows), and
+// only on desktop Chromium: userAgentData is Chromium-only and .mobile is true on Android,
+// and phones, Safari and Firefox cannot load the extension
+async function detectExtension() {
+  if (MEETING || !(navigator.userAgentData && !navigator.userAgentData.mobile)) return;
+  try {
+    const r = await fetch($('#extLink').href, { method: 'HEAD', cache: 'no-store' });
+    $('#extBlock').classList.toggle('hide', r.status !== 200);
+  } catch { /* offline: keep it hidden */ }
 }
 
 export function setStatus(text) { $('#status').textContent = text; }
@@ -368,7 +457,8 @@ async function stopRecording() {
   const seconds = (performance.now() - r.started) / 1000;
   const [blob, rawBlob] = await Promise.all([r.styled.stop(), r.raw?.stop()]);
   const ext = extFor(blob.type);
-  showResult({ blob, rawBlob, seconds, name: `3dvid-${settings.effect}-${settings.bg}-${stamp()}.${ext}` });
+  showResult({ blob, rawBlob, seconds, effect: settings.effect,
+               name: `3dvid-${settings.effect}-${settings.bg}-${stamp()}.${ext}` });
 }
 
 $('#recBtn').onclick = () => (recording ? stopRecording() : startRecording().catch(e => {
@@ -390,9 +480,13 @@ function showResult(res) {
   $('#dlLink').download = res.name;
   // on a desktop "Save" already downloads; the plain link is the phone's alternative to sharing
   $('#dlLink').classList.toggle('hide', !matchMedia('(pointer: coarse)').matches);
-  $('#hqStatus').textContent = res.still || res.rawBlob || !studio.available ? ''
-    : 'Tip: turn on "Also keep the raw take" to render the exact version in the studio.';
-  $('#hqBtn').classList.toggle('hide', !res.rawBlob);
+  // the studio can only re-render the effects stylize.py has
+  const exact = !res.still && isStudioEffect(res.effect);
+  $('#hqStatus').textContent = res.still || !studio.available ? ''
+    : !exact ? (res.rawBlob ? `${effectLabel(res.effect)} runs only live, so there is no exact studio version of this take ` +
+                              `(the studio renders ${STUDIO_LIST}).` : '')
+    : res.rawBlob ? '' : 'Tip: turn on "Also keep the raw take" to render the exact version in the studio.';
+  $('#hqBtn').classList.toggle('hide', !(res.rawBlob && exact));
   $('#hqBtn').disabled = false;
   $('#sheet').classList.remove('hide');
 }
@@ -401,6 +495,7 @@ function showResult(res) {
 // the real depth model and rembg replace the live approximations
 $('#hqBtn').onclick = async () => {
   const btn = $('#hqBtn'), status = $('#hqStatus');
+  if (!isStudioEffect(result.effect)) return;       // never ask the studio for a live-only effect
   btn.disabled = true;
   try {
     status.textContent = 'Uploading the raw take…';
@@ -413,7 +508,7 @@ $('#hqBtn').onclick = async () => {
 
     const job = new FormData();
     Object.entries({
-      video: up.name, kind: 'stylize', effect: settings.effect, bg: settings.bg, layout: settings.layout,
+      video: up.name, kind: 'stylize', effect: result.effect, bg: settings.bg, layout: settings.layout,
       face_mode: settings.face, subject_x: settings.subjectX, bands: settings.bands, min_cell: settings.minCell, max_cell: settings.maxCell,
       preview: 0, keep_audio: true, chromatic: settings.chroma, grain: settings.grain,
     }).forEach(([k, v]) => job.append(k, v));
@@ -443,6 +538,7 @@ $('#backBtn').onclick = () => {
 
 async function main() {
   detectStudio();
+  detectExtension();
   try {
     renderer = new Renderer($('#out'));
   } catch (e) {
@@ -461,6 +557,7 @@ async function main() {
   setStatus('loading person model…');
   try {
     seg = await Segmenter.create();
+    cacheMediaPipe().catch(() => {});
   } catch (e) {
     // without a mask the effects still run on the whole frame
     console.error('segmenter failed to load', e);

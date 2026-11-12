@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- maskable / apple-touch variant of icon.svg: full-bleed ground, the cube kept inside
+       the central 80% safe circle (radius 205) so any platform mask leaves it whole -->
+  <defs>
+    <radialGradient id="ground" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#121a3a"/>
+      <stop offset="1" stop-color="#05070f"/>
+    </radialGradient>
+    <linearGradient id="top" x1="0" y1="-1" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8fe2ff"/><stop offset="1" stop-color="#39c6ff"/>
+    </linearGradient>
+    <linearGradient id="left" x1="-0.87" y1="-0.5" x2="0" y2="1" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff2d95"/><stop offset="1" stop-color="#b8106a"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0.87" y1="-0.5" x2="0" y2="1" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff8a2a"/><stop offset="1" stop-color="#d04a00"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="0.16"/>
+    </filter>
+    <!-- unit cube: circumradius 1, centred on the origin -->
+    <g id="cube">
+      <polygon class="fine" points="0,-1 0.866,-0.5 0.866,0.5 0,1 -0.866,0.5 -0.866,-0.5"
+               fill="#39c6ff" opacity="0.35" filter="url(#glow)"/>
+      <polygon points="0,-1 0.866,-0.5 0,0 -0.866,-0.5" fill="url(#top)"/>
+      <polygon points="-0.866,-0.5 0,0 0,1 -0.866,0.5" fill="url(#left)"/>
+      <polygon points="0,0 0.866,-0.5 0.866,0.5 0,1" fill="url(#right)"/>
+      <g stroke="#05070f" fill="none">
+        <!-- face edges: always, they are what makes it read as a cube -->
+        <path d="M0,0 L0,1 M0,0 L-0.866,-0.5 M0,0 L0.866,-0.5" stroke-width="0.07"/>
+        <!-- voxel seams -->
+        <path class="fine" stroke-width="0.045"
+              d="M-0.433,-0.75 L0.433,-0.25 M0.433,-0.75 L-0.433,-0.25
+                 M-0.433,-0.25 L-0.433,0.75 M-0.866,0 L0,0.5
+                 M0.433,-0.25 L0.433,0.75 M0,0.5 L0.866,0"/>
+      </g>
+    </g>
+  </defs>
+  <rect width="512" height="512" fill="url(#ground)"/>
+  <use href="#cube" transform="translate(256 260) scale(150)"/>
+</svg>

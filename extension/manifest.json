@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "3dvid camera effects",
+  "short_name": "3dvid",
+  "version": "0.1.0",
+  "description": "Voxel, neon, ASCII, comic and other live 3dvid effects on your camera in Google Meet, Teams, Zoom and any site. Runs on your device.",
+  "homepage_url": "https://mwihoti.github.io/3dvid/",
+  "minimum_chrome_version": "116",
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "action": {
+    "default_title": "3dvid camera effects",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" }
+  },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["storage"],
+  "commands": {
+    "cycle-effect": {
+      "suggested_key": { "default": "Alt+Shift+E" },
+      "description": "Next camera effect"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "exclude_matches": ["https://mwihoti.github.io/3dvid/*"],
+      "js": ["main-world.js"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "exclude_matches": ["https://mwihoti.github.io/3dvid/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["engine.js", "settings.js", "lib/*"],
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
+    },
+    {
+      "resources": ["seg.html"],
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "use_dynamic_url": true
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self'"
+  }
+}

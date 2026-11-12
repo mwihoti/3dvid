@@ -21,3 +21,10 @@ venv/
 jobs.json
 public_url.txt
 start.log
+# browser extension build output (python3 extension/build.py); its icons are sources
+extension/lib/
+extension/vendor/
+dist/
+!extension/icons/*.png
+# the camera page's PWA icons are sources too: without them the site is not installable
+!web/camera/icons/*.png

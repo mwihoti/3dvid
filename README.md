@@ -41,7 +41,11 @@ Depth and person masks are cached in `.stylize_cache/` per clip, so re-renders s
 
 ## Live camera
 
-Open the camera, see the voxel / neon styles live, record, and save the video (or a photo) on the device.
+Open the camera, see the styles live, record, and save the video (or a photo) on the device.
+
+Eleven effects: the four the studio renders (**Voxel**, **Neon**, **Both**, **Clean**) and seven live-only ones (**ASCII**, **Halftone**, **Comic**, **Thermal**, **Hologram**, **8-bit**, **Sketch**). The live-only ones have no `stylize.py` version, so *Render exact version in studio* is only offered for the first four. The list lives in `web/camera/effects.js`; the page, meeting mode and the browser extension all build their controls from it.
+
+**Install it as an app.** The camera page is a Progressive Web App: *Install* in the header (Chrome, Edge, Android) or *Share → Add to Home Screen* (iPhone) gives it an icon and its own window, and it opens offline once it has been used online (including the person model). A *Meeting mode* shortcut is on the app icon's menu.
 
 - **From the studio:** `serve.py` serves it at `/camera/` (link in the studio header).
 - **On its own, free:** the `camera page` workflow publishes `web/camera/` to GitHub Pages on every push to `main`. Enable it once with Settings → Pages → Source: *GitHub Actions*; it is then at `https://<owner>.github.io/3dvid/`. Open that on a phone.
@@ -52,7 +56,9 @@ Everything runs on the device: MediaPipe's selfie segmenter finds the person, an
 
 ### In a real meeting (Zoom, Meet, Teams)
 
-Open `camera/?meeting` and feed it to the meeting app through a virtual camera. Meeting mode shows only the picture (unmirrored, at the webcam's own size), and you change styles with keys (`h` lists them). Settings are remembered, and can be preset in the URL: `camera/?meeting&effect=contour&bg=grid&face=clear`.
+**Easiest: the browser extension** (Chrome, Edge, Brave). It puts the effects on the camera of any website, so Google Meet, Teams and Zoom in the browser receive the styled video directly; no OBS, no virtual camera. Download *3dvid-camera-extension.zip* from the settings panel of the published camera page (or build it: `python3 extension/build.py`), unzip, open `chrome://extensions`, turn on *Developer mode*, *Load unpacked* the unzipped folder. Pick the effect in the extension's toolbar popup (or cycle with Alt+Shift+E); changes apply live in the call. All processing stays on the device. Details: `extension/README.md`.
+
+For desktop apps (the Zoom / Teams apps, not their web versions), use a virtual camera: open `camera/?meeting` and feed it to the meeting app through a virtual camera. Meeting mode shows only the picture (unmirrored, at the webcam's own size), and you change styles with keys: `1`-`0` pick an effect, `n` / `b` step through all of them, `h` lists the rest. Settings are remembered, and can be preset in the URL: `camera/?meeting&effect=contour&bg=grid&face=clear`.
 
 With [OBS Studio](https://obsproject.com) (free, Windows/macOS/Linux):
 1. Open the meeting page in a browser window and press F11 for fullscreen (or just keep it on screen).

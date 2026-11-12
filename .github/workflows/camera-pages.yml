@@ -1,6 +1,9 @@
 # Publishes the live camera page (web/camera/) to GitHub Pages: free, HTTPS (which
 # phones require before they will open a camera), and no server to pay for. The
 # page detects that the studio API is absent and hides the studio-only options.
+# The browser extension is built here too (extension/build.py: stdlib python plus
+# downloads of the pinned MediaPipe files) and served as 3dvid-camera-extension.zip
+# at the site root, next to index.html.
 #
 # One-time setup: repo Settings -> Pages -> Source: "GitHub Actions"
 #   (or: gh api -X POST repos/<owner>/3dvid/pages -f build_type=workflow)
@@ -10,7 +13,7 @@ name: camera page
 on:
   push:
     branches: [main]
-    paths: ['web/camera/**', '.github/workflows/camera-pages.yml']
+    paths: ['web/camera/**', 'extension/**', '.github/workflows/camera-pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -31,8 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/configure-pages@v6
+      - name: Build the extension and assemble the site
+        run: |
+          python3 extension/build.py
+          mkdir _site
+          cp -r web/camera/. _site/
+          cp dist/3dvid-camera-extension.zip _site/
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: web/camera
+          path: _site
       - id: deploy
         uses: actions/deploy-pages@v5

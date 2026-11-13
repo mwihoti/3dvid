@@ -18,6 +18,10 @@
     "cycle-effect": {
       "suggested_key": { "default": "Alt+Shift+E" },
       "description": "Next camera effect"
+    },
+    "cycle-background": {
+      "suggested_key": { "default": "Alt+Shift+G" },
+      "description": "Next camera background"
     }
   },
   "content_scripts": [

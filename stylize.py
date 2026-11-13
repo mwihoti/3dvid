@@ -10,7 +10,7 @@ Pipeline (per frame):
 Depth and mask are cached to .npz so re-renders skip both model passes.
 Does not modify nunif/ - it imports iw3 the same way convert3d.sh shells out to it.
 """
-import argparse, hashlib, json, os, shutil, subprocess, sys, time
+import argparse, hashlib, json, math, os, shutil, subprocess, sys, time
 from collections import OrderedDict
 from contextlib import contextmanager
 
@@ -520,7 +520,436 @@ def bg_dark(W, H, t, head):
     v = np.clip(1.0 - 0.72 * d ** 1.7, 0, 1)
     return np.clip(np.array([0x05, 0x07, 0x0f], np.float32) * (0.35 + 1.9 * v)[..., None], 0, 255).astype(np.uint8)
 
-BACKGROUNDS = {"plasma": bg_plasma, "grid": bg_grid, "dark": bg_dark}
+# ---- studio .. circuit: numpy ports of the GLSL in web/camera/shaders.js (same
+# formulas, same hash12 / vnoise in float32), so the live preview and the render
+# match: change both together. Smooth ones are evaluated at 1/2 or 1/4 resolution and
+# upsampled; anything that does not move is cached per canvas size.
+F32 = np.float32
+_BGC = {}
+
+def _memo(key, make):
+    if key not in _BGC:
+        _BGC[key] = make()
+    return _BGC[key]
+
+def _px(W, H, ds=1):
+    """The shader's P: pixel-centre coordinates (y down) of a W x H canvas, sampled every
+    ds px at block centres (where cv2.resize puts them when upsampling)."""
+    def make():
+        xs = (np.arange(W // ds, dtype=F32) + F32(0.5)) * F32(ds)
+        ys = (np.arange(H // ds, dtype=F32) + F32(0.5)) * F32(ds)
+        return np.meshgrid(xs, ys)
+    return _memo(("px", W, H, ds), make)
+
+def _fract(x):
+    return x - np.floor(x)
+
+def _hash12(x, y):
+    """shaders.js hash12(vec2(x, y))."""
+    a = _fract(np.asarray(x, F32) * F32(0.1031))
+    b = _fract(np.asarray(y, F32) * F32(0.1031))
+    c = a
+    d = a * (b + F32(33.33)) + b * (c + F32(33.33)) + c * (a + F32(33.33))
+    return _fract((a + d + b + d) * (c + d))
+
+def _vnoise(x, y):
+    ix, iy = np.floor(x), np.floor(y)
+    fx, fy = x - ix, y - iy
+    ux, uy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
+    a, b = _hash12(ix, iy), _hash12(ix + 1, iy)
+    c, d = _hash12(ix, iy + 1), _hash12(ix + 1, iy + 1)
+    top = a + (b - a) * ux
+    return top + (c + (d - c) * ux - top) * uy
+
+def _ss(e0, e1, x):
+    """GLSL smoothstep."""
+    s = np.clip((x - e0) / (e1 - e0), 0, 1)
+    return s * s * (3 - 2 * s)
+
+def _rgb(*c):
+    return np.array(c, F32) / 255
+
+def _fbm_gl(X, Y, W, H, k, t):
+    """shaders.js fbm(): not _fbm, which samples a cached random grid instead."""
+    acc, amp, norm = 0, 1.0, 0.0
+    for o in range(4):
+        sx, sy = 9 * t * (o + 1) * 2 * k, 5 * t * (o + 1) * 2 * k
+        acc = acc + amp * _vnoise((X + sx) / (2 * W) * (4 << o) + o * 17, (Y + sy) / (2 * H) * (4 << o) + o * 17)
+        norm += amp; amp *= 0.5
+    return acc / norm
+
+def _out(col, W, H):
+    """float RGB 0..1 at any resolution -> uint8 W x H, like the other backgrounds.
+    (convertScaleAbs: one rounded, saturated pass; the colours are never negative.)"""
+    if col.shape[:2] != (H, W):
+        col = cv2.resize(col, (W, H), interpolation=cv2.INTER_LINEAR)
+    return cv2.convertScaleAbs(col, alpha=255)
+
+def _k(W, H):
+    return min(W, H) / 1080.0          # the shader's uK
+
+def _stars(W, H, cell, density, t):
+    """shaders.js stars() at full resolution. Where each star sits never changes, so
+    only its twinkle (one value per lit cell) is computed per frame."""
+    k = _k(W, H)
+    def make():
+        X, Y = _px(W, H)
+        s = F32(cell * k)
+        gx, gy = np.floor(X / s), np.floor(Y / s)
+        G = np.meshgrid(np.arange(int(W / s) + 2, dtype=F32), np.arange(int(H / s) + 2, dtype=F32))
+        h = _hash12(*G)
+        cx = _hash12(G[0] + F32(3.1), G[1] + F32(3.1)) * F32(0.6) + F32(0.2)
+        cy = _hash12(G[0] + F32(7.7), G[1] + F32(7.7)) * F32(0.6) + F32(0.2)
+        ix, iy = gx.astype(np.int32), gy.astype(np.int32)
+        d2 = ((X / s - gx - cx[iy, ix]) ** 2 + (Y / s - gy - cy[iy, ix]) ** 2) * F32(cell * cell)
+        glow = np.exp(-d2 * F32(0.9))
+        sel = np.nonzero((h[iy, ix] <= density) & (glow > 1e-3))
+        return (sel, glow[sel], iy[sel], ix[sel], h,
+                F32(0.8) + F32(2.4) * _hash12(G[0] + F32(1.9), G[1] + F32(1.9)),
+                F32(0.35) + F32(0.65) * _hash12(G[0] + F32(5.3), G[1] + F32(5.3)))
+    sel, glow, iy, ix, h, speed, bright = _memo(("stars", W, H, cell, density), make)
+    amp = (0.65 + 0.35 * np.sin(t * speed + h * 400.0)) * bright
+    out = np.zeros((H, W), F32)
+    out[sel] = glow * amp[iy, ix]
+    return out
+
+def bg_studio(W, H, t, head):
+    k = _k(W, H)
+    X, Y = _px(W, H, 2)
+    hx, hy, hw = head
+    col = _rgb(0x2b, 0x32, 0x3e) + (_rgb(0x0d, 0x10, 0x16) - _rgb(0x2b, 0x32, 0x3e)) * _ss(0, 1, Y / H)[..., None]
+    cx, cy = hx + math.sin(t * 0.11) * 0.05 * W, hy + 0.06 * H
+    r = max(hw * 3.0, 380 * k)
+    dx, dy = (X - cx) / (r * 1.3), (Y - cy) / r
+    col += _rgb(0x5c, 0x6c, 0x84) * (np.exp(-(dx * dx + dy * dy) * 1.3) * 0.75)[..., None]
+    qx, qy = (X - W / 2) / (W / 2), (Y - H / 2) / (H / 2)
+    col *= (1 - 0.14 * (qx * qx + qy * qy))[..., None]
+    col = cv2.resize(col, (W, H), interpolation=cv2.INTER_LINEAR)
+    dither = _memo(("dither", W, H), lambda: ((_hash12(*_px(W, H)) - 0.5) / 255)[..., None])
+    return _out(col + dither, W, H)
+
+_BOKEH_TINTS = [_rgb(255, 176, 80), _rgb(255, 120, 60), _rgb(255, 96, 128), _rgb(255, 226, 170)]
+
+def bg_bokeh(W, H, t, head):
+    k = _k(W, H)
+    Y = (np.arange(H, dtype=F32) + 0.5)[:, None, None]
+    col = np.broadcast_to(_rgb(0x14, 0x0c, 0x16) + (_rgb(0x24, 0x14, 0x0e) - _rgb(0x14, 0x0c, 0x16)) * (Y / H),
+                          (H, W, 3)).copy()
+    for i in range(36):
+        z = float(_hash12(i, 2.3))
+        rad = (28 + 80 * z) * k
+        span = W + 2 * rad
+        cx = (float(_hash12(i, 8.1)) * span + t * (6 + 14 * z) * k) % span - rad
+        cy = (0.12 + 0.8 * float(_hash12(i, 4.6))) * H + math.sin(t * 0.3 + i) * 12 * k
+        reach = rad + 3 * k
+        x0, x1 = max(0, int(cx - reach)), min(W, int(cx + reach) + 2)
+        y0, y1 = max(0, int(cy - reach)), min(H, int(cy + reach) + 2)
+        if x0 >= x1 or y0 >= y1:
+            continue
+        xs = np.arange(x0, x1, dtype=F32) + 0.5
+        ys = np.arange(y0, y1, dtype=F32)[:, None] + 0.5
+        d = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
+        disc = 1 - _ss(rad - 3 * k, rad + 2 * k, d)
+        rim = _ss(rad * 0.55, rad, d) * disc
+        tw = 0.75 + 0.25 * math.sin(t * (0.5 + float(_hash12(i, 6.2))) + i * 1.7)
+        col[y0:y1, x0:x1] += _BOKEH_TINTS[i % 4] * ((disc * 0.16 + rim * 0.10) * (0.5 + 0.6 * z) * tw)[..., None]
+    return _out(col, W, H)
+
+def bg_aurora(W, H, t, head):
+    X, Y = _px(W, H, 2)
+    y, x = Y / H, X[:1] / H                         # the curtains' shape depends on x only
+    col = _rgb(0x02, 0x04, 0x10) + (_rgb(0x06, 0x1a, 0x2a) - _rgb(0x02, 0x04, 0x10)) * _ss(0.1, 1, y)[..., None]
+    for i in range(3):
+        edge = (0.42 + 0.12 * i + 0.07 * np.sin(x * (1.3 + 0.4 * i) + t * (0.12 + 0.05 * i) + i * 2.0)
+                + 0.10 * (_vnoise(x * 2.2 + i * 9.0, np.full_like(x, t * 0.15)) - 0.5))
+        above = edge - y
+        glow = np.exp(-np.maximum(above, 0) / (0.16 + 0.05 * i)) * np.exp(-np.minimum(above, 0) ** 2 / 0.0006)
+        rays = 0.45 + 0.55 * _vnoise(x * 38.0 + i * 31.0, np.full_like(x, t * 0.35))
+        tint = np.array([0.20, 1.0, 0.55], F32) + np.array([0.42, -0.70, 0.45], F32) * np.clip(above * 3, 0, 1)[..., None]
+        col += tint * (glow * rays * (0.42 - 0.1 * i))[..., None]
+    col = cv2.resize(col, (W, H), interpolation=cv2.INTER_LINEAR)
+    fade = (1 - 0.7 * (np.arange(H, dtype=F32) + 0.5) / H)[:, None]
+    col += np.array([0.85, 0.9, 1.0], F32) * (_stars(W, H, 9.0, 0.05, t) * fade)[..., None]
+    return _out(col, W, H)
+
+def bg_nebula(W, H, t, head):
+    k = _k(W, H)
+    X, Y = _px(W, H, 4)
+    a = _fbm_gl(X, Y, W, H, k, t * 0.3)
+    b = _fbm_gl(X + (a - 0.5) * 900 * k + 5000 * k, Y + (0.5 - a) * 900 * k + 5000 * k, W, H, k, t * 0.2)
+    col = np.broadcast_to(_rgb(0x03, 0x03, 0x0c), a.shape + (3,)).copy()
+    col += np.array([0.30, 0.10, 0.62], F32) * (_ss(0.38, 0.72, b) * 0.9)[..., None]
+    col += np.array([1.00, 0.24, 0.62], F32) * (_ss(0.52, 0.80, b) * _ss(0.45, 0.70, a) * 0.8)[..., None]
+    col += np.array([0.16, 0.70, 1.00], F32) * (_ss(0.55, 0.85, a) * (1 - _ss(0.40, 0.70, b)) * 0.45)[..., None]
+    veil = 1 - 0.7 * _ss(0.5, 0.8, b)
+    col = cv2.resize(col, (W, H), interpolation=cv2.INTER_LINEAR)
+    veil = cv2.resize(veil, (W, H), interpolation=cv2.INTER_LINEAR)
+    col += (_stars(W, H, 8.0, 0.06, t) * veil)[..., None]
+    return _out(col, W, H)
+
+def bg_warp(W, H, t, head):
+    k = _k(W, H)
+    def make():
+        X, Y = _px(W, H)
+        dx, dy = X - W / 2, Y - H / 2
+        rpx = np.sqrt(dx * dx + dy * dy)
+        r = rpx / F32(0.5 * np.hypot(W, H))
+        ang = np.arctan2(dy, dx) / F32(2 * np.pi) + F32(0.5)
+        base = _rgb(0x0c, 0x08, 0x24) + (_rgb(0x02, 0x02, 0x08) - _rgb(0x0c, 0x08, 0x24)) * _ss(0, 0.9, r)[..., None]
+        base += np.array([0.25, 0.18, 0.75], F32) * (np.exp(-r * r * 9) * 0.5)[..., None]
+        layers = []
+        for L in range(3):
+            N = 70.0 + 55.0 * L
+            s = ang * F32(N) + F32(L * 0.37)
+            lane = np.mod(np.floor(s), N).astype(np.int32)
+            dpx = np.abs(_fract(s) - 0.5) * F32(2 * np.pi / N) * rpx
+            ids = np.arange(int(N), dtype=F32)
+            layers.append((N, lane, dpx, _hash12(ids, L + 1.0), _hash12(ids, L + 11.0)))
+        return r, base, layers
+    r, base, layers = _memo(("warp", W, H), make)
+    col = base.copy()
+    for L, (N, lane, dpx, h, h2) in enumerate(layers):
+        z = _fract(h2 + t * (0.18 + 0.22 * h))
+        z = np.where(h < 0.35, -1.0, z)            # not every lane has a star
+        head_, ln = 0.04 + 1.15 * z * z, 0.02 + 0.45 * z * z * z
+        zp, hp, lp = z[lane], head_[lane], ln[lane]
+        sel = np.nonzero((zp >= 0) & (r > hp - lp) & (r < hp + 0.004))
+        zs, rs_ = zp[sel], r[sel]
+        along = _ss(hp[sel] - lp[sel], hp[sel], rs_) * (1 - _ss(hp[sel], hp[sel] + 0.004, rs_))
+        half = (0.25 + 1.1 * zs) * k
+        across = 1 - _ss(half, half + k, dpx[sel])
+        tint = np.array([0.45, 0.55, 1.0], F32) + np.array([0.47, 0.40, 0.0], F32) * zs[:, None]
+        fade = 1 - _ss(0.85, 1.0, zs)                # gone before the lane wraps to z = 0
+        col[sel] += tint * (along * across * (0.25 + 1.1 * zs) * fade)[:, None]
+    return _out(col, W, H)
+
+def _sunset_sky(W, H, k, t, horizon, hz):
+    """shaders.js sunsetSky() for the rows above the horizon. The gradient is per row,
+    the glow is smooth (quarter resolution), and the sun's banded disc and the
+    mountains are drawn only where they can be."""
+    yr = (np.arange(hz, dtype=F32) + 0.5) / horizon
+    c0, c1, c2 = _rgb(0x14, 0x06, 0x2e), _rgb(0x6a, 0x12, 0x5a), _rgb(0xff, 0x6a, 0x3c)
+    grad = c0 + (c1 - c0) * _ss(0, 0.75, yr)[:, None]
+    grad = grad + (c2 - grad) * _ss(0.65, 1.0, yr)[:, None]
+    col = np.broadcast_to(grad[:, None, :], (hz, W, 3)).copy()
+    Sm = min(W, H)                                  # sized by the short side: portrait too
+    R = 0.27 * Sm
+    scx, scy = W * 0.5, horizon - R * 0.42
+    Xg, Yg = _px(W, H, 4)
+    glow = np.exp(-(np.maximum(np.sqrt((Xg - scx) ** 2 + (Yg - scy) ** 2) - R, 0) / (0.22 * Sm)) ** 2) * 0.35
+    col += np.array([1.0, 0.35, 0.45], F32) * cv2.resize(glow, (W, H), interpolation=cv2.INTER_LINEAR)[:hz, :, None]
+    X, Y = _px(W, H)
+    y0, y1 = max(0, int(scy - R - 3)), min(hz, int(scy + R + 3))
+    x0, x1 = max(0, int(scx - R - 3)), min(W, int(scx + R + 3))
+    Xb, Yb = X[y0:y1, x0:x1], Y[y0:y1, x0:x1]
+    d = np.sqrt((Xb - scx) ** 2 + (Yb - scy) ** 2)
+    v = (Yb - scy + R) / (2 * R)
+    sun = np.array([1.0, 0.9, 0.36], F32) + np.array([0.0, -0.65, 0.19], F32) * np.clip(v, 0, 1)[..., None]
+    cut = (v > 0.2) & (np.clip((v - 0.2) * 0.8, 0, 0.6) >= _fract(v * 9.0 - t * 0.35))
+    m = (1 - _ss(R - 1.5 * k, R + 1.5 * k, d)) * ~cut
+    sub = col[y0:y1, x0:x1]
+    sub += (sun - sub) * m[..., None]
+    # two ridges: functions of x only; below the highest one everything is computed
+    xs = X[0]
+    top = max(0, int(horizon - Sm * 0.2))
+    Yc = Y[top:hz, :1]
+    for i in range(2):
+        x = xs / H * (2.0 + 1.5 * i) + t * (0.02 + 0.03 * i) + i * 7.0
+        fi = np.full_like(x, i)
+        ridge = horizon - Sm * ((0.13 - 0.05 * i) * _vnoise(x, fi) + 0.05 * _vnoise(x * 4.0, fi + 3.0) + 0.01)
+        rock = (_rgb(0x2a, 0x0a, 0x3c) if i == 0 else _rgb(0x12, 0x04, 0x22)) \
+            + np.array([1.0, 0.3, 0.6], F32) * (np.exp(-np.maximum(Yc - ridge, 0) / (3 * k)) * 0.35)[..., None]
+        band = col[top:hz]
+        band += (rock - band) * _ss(ridge - k, ridge + k, Yc)[..., None]
+    return col
+
+def bg_sunset(W, H, t, head):
+    """Above the horizon the sky; below, the same sky mirrored, rippled sideways and
+    darkened (a remap of the sky rows, where the shader evaluates it again)."""
+    k = _k(W, H)
+    horizon = float(np.floor(H * 0.64))
+    hz = int(horizon)
+    sky = _sunset_sky(W, H, k, t, horizon, hz)
+    X, Y = _px(W, H)
+    Xw, Yw = X[hz:], Y[hz:]
+    dy = Yw - horizon
+    wob = np.sin(dy / k * 0.35 - t * 2.2 + np.sin(Xw / k * 0.013) * 2.0) * (2.0 + dy * 0.05)
+    water = cv2.remap(sky, Xw + wob - 0.5, horizon - dy - 0.5, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+    shade = (1 - 0.5 * dy / (H - horizon)) * (0.88 + 0.12 * np.sin(dy / k * 0.9 - t * 3.0))
+    water *= np.array([0.55, 0.5, 0.75], F32) * shade[..., None]
+    return _out(np.concatenate([sky, water]), W, H)
+
+def _rain_layer(W, H, k, t, cw, speed, seed):
+    """shaders.js rainLayer(), evaluated once per glyph dot (7 x 9 per cell): returns the
+    dots' (brightness, leading glyph) and, per pixel, the index of its dot."""
+    cx, cy = cw * k, cw * 1.3 * k
+    ncx, ncy = int(W / cx) + 1, int(H / cy) + 1
+    gx = np.arange(ncx, dtype=F32)
+    hc = _hash12(gx, np.full_like(gx, seed))
+    ln = 8 + 22 * _hash12(gx, np.full_like(gx, seed + 1.0))
+    cycle = np.floor(H / F32(cy)) + ln
+    head_row = np.floor(np.mod(hc * cycle + t * speed * (0.6 + 0.8 * hc), cycle))
+    G = np.meshgrid(gx, np.arange(ncy, dtype=F32))
+    behind = head_row[None, :] - G[1]                       # per cell
+    lit = (behind >= 0) & (behind <= ln[None, :])
+    hg = _hash12(G[0] + F32(seed * 7.0), G[1] + F32(seed * 7.0))
+    glyph = np.floor(t * (0.5 + 3.0 * hg) + hg * 10.0)
+    level = np.where(lit, np.clip(1 - behind / (ln[None, :] + 1), 0, 1) ** 1.5, 0).astype(F32)
+    lead = (lit & (behind <= 0.5)).astype(F32)
+    # every dot as (cell row, dot row, cell column, dot column)
+    shape = (ncy, 9, ncx, 7)
+    # glyphBar(): 12 bars per glyph, then each dot is lit if a bar through it is
+    bars = [_hash12(b + glyph * 13, G[0] * 7 + G[1] * 131) >= 0.5 for b in range(12)]
+    bars[9] = bars[9] & ~(bars[2] & bars[3] & bars[8])     # never the whole centre cross
+    on = np.zeros(shape, bool)
+    for sy in range(7):
+        for sx in range(5):
+            hit = []
+            if sy % 3 == 0:
+                hit += [sy // 3 * 2] * (sx <= 2) + [sy // 3 * 2 + 1] * (sx >= 2)
+            if sx % 2 == 0:
+                hit += [6 + sx] * (sy <= 3) + [7 + sx] * (sy >= 3)
+            if hit:
+                on[:, sy + 1, :, sx + 1] = np.logical_or.reduce([bars[b] for b in hit])
+    bright = (on * level[:, None, :, None]).reshape(-1)
+    leadd = (on * lead[:, None, :, None]).reshape(-1)
+    def make():
+        X, Y = _px(W, H)
+        ix = np.minimum(np.floor(X[0] / F32(cx) * 7).astype(np.int32), ncx * 7 - 1)
+        iy = np.minimum(np.floor(Y[:, 0] / F32(cy) * 9).astype(np.int32), ncy * 9 - 1)
+        return iy[:, None] * (ncx * 7) + ix[None, :]
+    return bright, leadd, _memo(("rain", W, H, cw), make)
+
+def bg_rain(W, H, t, head):
+    """Coloured per dot, then each pixel picks up its dot's colour (np.take)."""
+    k = _k(W, H)
+    fb, _, fidx = _rain_layer(W, H, k, t, 11.0, 7.0, 3.0)
+    nb, nl, nidx = _rain_layer(W, H, k, t, 20.0, 9.0, 1.0)
+    far = np.array([0.05, 0.45, 0.2], F32) * (fb * 0.45)[:, None]
+    near = (np.array([0.12, 0.95, 0.45], F32) + np.array([0.73, 0.05, 0.45], F32) * nl[:, None]) * nb[:, None]
+    far[:, 1] += 0.03; far[:, 2] += 0.012                   # the dark green ground, once
+    return _out(np.take(far, fidx, axis=0) + np.take(near, nidx, axis=0), W, H)
+
+def bg_ocean(W, H, t, head):
+    k = _k(W, H)
+    X, Y = _px(W, H, 2)
+    y = Y / H
+    col = _rgb(0x0b, 0x5a, 0x8c) + (_rgb(0x02, 0x12, 0x2a) - _rgb(0x0b, 0x5a, 0x8c)) * _ss(0, 1, y)[..., None]
+    # the network's wobble and the light shafts are smooth: 1/8 resolution, upsampled
+    X8, Y8 = _px(W, H, 8)
+    p8x, p8y = X8 / F32(150 * k), Y8 / F32(150 * k)
+    wob = np.dstack([_vnoise(p8x * 0.5 + t * 0.2, p8y * 0.5 + t * 0.2),
+                     _vnoise(p8x * 0.5 + 7.0 - t * 0.2, p8y * 0.5 + 7.0 - t * 0.2),
+                     _vnoise(X8 / H * 6.0 + Y8 / H * 1.2, np.full_like(X8, t * 0.15)),
+                     _vnoise(p8x * 0.35 + 40.0 + t * 0.1, p8y * 0.35 + 40.0 + t * 0.1)])
+    wob = cv2.resize(wob, X.shape[::-1], interpolation=cv2.INTER_LINEAR)
+    px = X / F32(150 * k) + (wob[..., 0] - 0.5) * 0.6
+    py = Y / F32(150 * k) + (wob[..., 1] - 0.5) * 0.6
+    # voronoiEdge: the wandering points, one per cell, computed per cell and gathered
+    gx, gy = np.floor(px), np.floor(py)
+    fx, fy = px - gx, py - gy
+    o = 3
+    G = np.meshgrid(np.arange(-o, int(W / (150 * k)) + o + 1, dtype=F32),
+                    np.arange(-o, int(H / (150 * k)) + o + 1, dtype=F32))
+    hx, hy = _hash12(*G), _hash12(G[0] + F32(19.7), G[1] + F32(19.7))
+    offx = 0.5 + 0.4 * np.sin(t * (0.6 + 0.6 * hx) + hx * 6.2831)
+    offy = 0.5 + 0.4 * np.sin(t * (0.6 + 0.6 * hy) + hy * 6.2831)
+    ncol = G[0].shape[1]
+    base = (gy.astype(np.int32) + o) * ncol + gx.astype(np.int32) + o
+    offx, offy = offx.reshape(-1), offy.reshape(-1)
+    d1 = np.full(px.shape, 8.0, F32); d2 = d1.copy()
+    for j in (-1, 0, 1):
+        for i in (-1, 0, 1):
+            n = base + (j * ncol + i)
+            ex = i + np.take(offx, n) - fx
+            ey = j + np.take(offy, n) - fy
+            d = np.sqrt(ex * ex + ey * ey)
+            d2 = np.where(d < d1, d1, np.minimum(d2, d))
+            d1 = np.minimum(d1, d)
+    caus = (1 - _ss(0, 0.16, d2 - d1)) ** 3 * (0.35 + 1.1 * wob[..., 3])
+    col += np.array([0.55, 0.95, 1.0], F32) * (caus * (0.6 - 0.35 * y))[..., None]
+    shaft = wob[..., 2]
+    col += np.array([0.35, 0.75, 0.9], F32) * (shaft ** 3 * (1 - y) * 0.35)[..., None]
+    col = cv2.resize(col, (W, H), interpolation=cv2.INTER_LINEAR)
+    for i in range(14):                                          # bubbles: thin rings, full res
+        rad = (3 + 7 * float(_hash12(i, 2.0))) * k
+        span = H + 4 * rad
+        cx = float(_hash12(i, 4.0)) * W + math.sin(t * 1.3 + i) * 6 * k
+        cy = H + 2 * rad - (float(_hash12(i, 5.0)) * span + t * (40 + 60 * float(_hash12(i, 3.0))) * k) % span
+        x0, x1 = max(0, int(cx - rad - 3 * k)), min(W, int(cx + rad + 3 * k) + 2)
+        y0, y1 = max(0, int(cy - rad - 3 * k)), min(H, int(cy + rad + 3 * k) + 2)
+        if x0 >= x1 or y0 >= y1:
+            continue
+        xs = np.arange(x0, x1, dtype=F32) + 0.5
+        ys = np.arange(y0, y1, dtype=F32)[:, None] + 0.5
+        d = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
+        ring = _ss(rad - 1.5 * k, rad, d) - _ss(rad, rad + k, d)
+        col[y0:y1, x0:x1] += np.array([0.7, 0.95, 1.0], F32) * (ring * 0.5)[..., None]
+    return _out(col, W, H)
+
+def bg_lava(W, H, t, head):
+    X, Y = _px(W, H, 2)
+    y = Y / H
+    field = np.zeros_like(X)
+    for i in range(8):
+        hx, hy = float(_hash12(i, 1.0)), float(_hash12(i, 2.0))
+        cx = (0.08 + 0.84 * hx) * W + math.sin(t * 0.21 + i * 2.1) * 0.06 * W
+        cy = (0.5 + 0.55 * math.sin(t * (0.07 + 0.06 * hy) + i * 1.7)) * H
+        r = (0.07 + 0.07 * hy) * min(W, H)
+        dx, dy = (X - cx) / r, (Y - cy) / r
+        field += 1 / (dx * dx + dy * dy + 1e-3)
+    col = _rgb(0x2a, 0x06, 0x3a) + (_rgb(0x0a, 0x02, 0x18) - _rgb(0x2a, 0x06, 0x3a)) * y[..., None]
+    wax = np.array([1.0, 0.75, 0.2], F32) + np.array([0.0, -0.55, 0.25], F32) * y[..., None]
+    col += wax * (_ss(0.35, 1.0, field) * 0.10)[..., None]
+    blob = wax * (0.72 + 0.28 * np.clip((field - 1) / 2, 0, 1))[..., None]
+    col += (blob - col) * _ss(0.97, 1.03, field)[..., None]
+    return _out(col, W, H)
+
+def bg_circuit(W, H, t, head):
+    """The board never changes, so it is drawn once per canvas size; per frame only
+    the pulses are evaluated, and only on the pixels near a trace."""
+    k = _k(W, H)
+    def make():
+        X, Y = _px(W, H)
+        cell = F32(44 * k)
+        gx, gy = np.floor(X / cell), np.floor(Y / cell)
+        fx, fy = X / cell - gx - F32(0.5), Y / cell - gy - F32(0.5)
+        G = np.meshgrid(np.arange(-1, int(W / cell) + 2, dtype=F32), np.arange(-1, int(H / cell) + 2, dtype=F32))
+        hh = _hash12(*G) >= 0.55                                      # edge to the right
+        hv = _hash12(G[0] + F32(71.3), G[1] + F32(71.3)) >= 0.60      # edge downwards
+        ix, iy = gx.astype(np.int32) + 1, gy.astype(np.int32) + 1
+        e = [hh[iy, ix], hh[iy, ix - 1], hv[iy, ix], hv[iy - 1, ix]]
+        a = [np.clip(fx, 0, 0.5), np.clip(-fx, 0, 0.5), np.clip(fy, 0, 0.5), np.clip(-fy, 0, 0.5)]
+        dk = [np.hypot(fx - a[0], fy), np.hypot(fx + a[1], fy), np.hypot(fx, fy - a[2]), np.hypot(fx, fy + a[3])]
+        dk = [np.where(ek, d * cell, F32(1e9)) for ek, d in zip(e, dk)]
+        dist = np.minimum.reduce(dk)
+        dh, dv = np.minimum(dk[0], dk[1]), np.minimum(dk[2], dk[3])
+        w = 2.2 * k
+        col = np.broadcast_to(_rgb(0x04, 0x16, 0x12), (H, W, 3)).copy()
+        col += np.array([0.20, 0.55, 0.42], F32) * (0.55 * (1 - _ss(w - 0.75 * k, w + 0.75 * k, dist)))[..., None]
+        deg = sum(ek.astype(np.int32) for ek in e)
+        ring = np.abs(np.hypot(fx, fy) * cell - 5.5 * k)
+        pad = np.where(deg == 1, 1 - _ss(1.6 * k, 2.6 * k, ring), 0)[..., None]
+        col += (np.array([0.85, 0.65, 0.25], F32) * 0.8 - col) * pad
+        # the pixels a pulse can light, with what a pulse there depends on
+        near = []
+        for dd, along, lane in ((dh, X, gy), (dv, Y, gx + 500)):
+            sel = np.nonzero(dd < 4 * k)
+            hl = _hash12(lane[sel], np.full(len(sel[0]), 9.0, F32))
+            coord = along[sel] / F32(k) * np.where(hl > 0.5, 1, -1).astype(F32)
+            near.append((sel, coord, hl, 1 - _ss(2 * k, 4 * k, dd[sel])))
+        return col, near
+    base, near = _memo(("circuit", W, H), make)
+    pulse = np.zeros((H, W), F32)
+    for sel, coord, hl, cover in near:
+        ph = _fract(coord / 520.0 + t * (0.25 + 0.3 * hl) + hl * 7.0)
+        pulse[sel] = np.maximum(pulse[sel], np.exp(-ph * 14.0) * cover)
+    return _out(base + np.array([0.5, 1.0, 0.85], F32) * pulse[..., None], W, H)
+
+BACKGROUNDS = {"plasma": bg_plasma, "grid": bg_grid, "dark": bg_dark,
+               "studio": bg_studio, "bokeh": bg_bokeh, "aurora": bg_aurora, "nebula": bg_nebula,
+               "warp": bg_warp, "sunset": bg_sunset, "rain": bg_rain, "ocean": bg_ocean,
+               "lava": bg_lava, "circuit": bg_circuit}
 
 # ---------------------------------------------------------------- layout / composite ----
 LAYOUTS = {"portrait": (1080, 1920, 0.50), "wide": (1920, 1080, 0.72), "square": (1080, 1080, 0.50)}
@@ -781,7 +1210,7 @@ def main():
                                   "for a one-frame render")
     ap.add_argument("--effect", choices=["voxel", "contour", "both", "clean"], default="voxel",
                     help="clean = person kept as original pixels, only the background changes")
-    ap.add_argument("--bg", choices=["plasma", "grid", "dark", "source", "filmed"], default="plasma",
+    ap.add_argument("--bg", choices=[*BACKGROUNDS, "source", "filmed"], default="plasma",
                     help="source = the filmed background with the chosen effect applied to it; "
                          "filmed = the filmed background left as shot (pair with --face-mode only "
                          "for a real room behind a stylised head)")

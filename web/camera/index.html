@@ -79,9 +79,9 @@ button.pill:hover{color:var(--ink);border-color:var(--cyan)}
   border-radius:9px;padding:8px 6px;font:inherit;font-size:12.5px;cursor:pointer}
 .seg button:hover{color:var(--ink)}
 /* eleven effects: an even grid instead of a ragged flex row */
-#effect{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
-@media(max-width:860px) and (min-width:560px){#effect{grid-template-columns:repeat(6,minmax(0,1fr))}}
-#effect button{min-width:0;padding:8px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#effect,#bg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:860px) and (min-width:560px){#effect,#bg{grid-template-columns:repeat(6,minmax(0,1fr))}}
+#effect button,#bg button{min-width:0;padding:8px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .seg button[aria-pressed=true]{background:linear-gradient(180deg,#182248,#0e1530);color:var(--ink);
   border-color:var(--cyan);box-shadow:0 0 0 1px rgba(57,198,255,.25),0 0 18px -6px var(--cyan)}
 .range{display:grid;grid-template-columns:86px 1fr 34px;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin:6px 0}
@@ -155,6 +155,7 @@ body.meeting .panel{padding-top:max(14px,env(safe-area-inset-top));padding-botto
     <div class="keys hide" id="keys">
       <span id="effectKeys"></span><br>
       <b>q</b>plasma <b>w</b>grid <b>e</b>dark <b>r</b>filmed <b>t</b>filmed FX<br>
+      <b>v</b>next background <b>x</b>previous<br>
       <b>f</b>face mode <b>m</b>mirror <b>c</b>fringe <b>g</b>grain <b>p</b>colours<br>
       <b>s</b>settings panel <b>h</b>this help
     </div>
@@ -172,13 +173,7 @@ body.meeting .panel{padding-top:max(14px,env(safe-area-inset-top));padding-botto
     <h2>Effect</h2>
     <div class="seg" id="effect"><!-- buttons built by app.js from effects.js --></div>
     <h2>Background</h2>
-    <div class="seg" id="bg">
-      <button data-v="plasma" aria-pressed="true">Plasma</button>
-      <button data-v="grid" aria-pressed="false">Grid</button>
-      <button data-v="dark" aria-pressed="false">Dark</button>
-      <button data-v="filmed" aria-pressed="false">Filmed</button>
-      <button data-v="source" aria-pressed="false">Filmed FX</button>
-    </div>
+    <div class="seg" id="bg"><!-- buttons built by app.js from effects.js --></div>
     <h2>Face</h2>
     <div class="seg" id="face">
       <button data-v="off" aria-pressed="true">Effect everywhere</button>

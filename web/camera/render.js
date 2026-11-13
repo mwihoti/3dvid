@@ -1,11 +1,11 @@
 // Per-frame GPU pipeline: camera -> composite (layout + background) -> canvas.
 import { createGL, Pass, Target, texture, uploadImage, uploadR8 } from './gl.js';
 import * as S from './shaders.js';
-import { EFFECTS } from './effects.js';
+import { EFFECTS, BACKGROUNDS } from './effects.js';
 
 // same canvases as stylize.py's LAYOUTS: (width, height, subject centre as a fraction of width)
 const LAYOUTS = { wide: [1920, 1080, 0.72], portrait: [1080, 1920, 0.50], square: [1080, 1080, 0.50] };
-const BG = { plasma: 0, grid: 1, dark: 2, filmed: 3, source: 4 };
+const BG = Object.fromEntries(BACKGROUNDS.map((b, i) => [b.id, i]));   // the shader's uBg
 // an effect's index in EFFECTS is the FX shader's uEffect
 const EFFECT = Object.fromEntries(EFFECTS.map((e, i) => [e.id, i]));
 const FACE = { off: 0, clear: 1, only: 2 };
@@ -119,7 +119,7 @@ export class Renderer {
       .tex('uVideo', this.video).tex('uFx', this.fx.tex).tex('uMask', this.mask)
       .i('uHasMask', hasMask ? 1 : 0).i('uMirror', settings.mirror ? 1 : 0)
       .f('uCanvas', CW, CH).f('uSrc', vw, vh).f('uSc', sc).f('uOx', ox)
-      .i('uBg', BG[settings.bg]).f('uHead', ...head).f('uK', k).f('uTime', t)
+      .i('uBg', BG[settings.bg] ?? 0).f('uHead', ...head).f('uK', k).f('uTime', t)
       // no person, or the clean effect: nothing to protect
       .i('uFace', st && settings.effect !== 'clean' ? FACE[settings.face] : 0)
       .f('uFaceRows', st ? st.top : 0, st ? Math.min(1, st.cut + FACE_PAD * (st.bottom - st.top)) : 0)

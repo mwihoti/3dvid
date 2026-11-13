@@ -3,7 +3,7 @@ import { Renderer } from './render.js';
 import { Segmenter } from './segment.js';
 import { buildPalette } from './palette.js';
 import { Recorder, saveToDevice, extFor, stamp } from './recorder.js';
-import { EFFECTS, effectIndex, isStudioEffect } from './effects.js';
+import { EFFECTS, BACKGROUNDS, effectIndex, isStudioEffect, bgIndex } from './effects.js';
 
 const $ = s => document.querySelector(s);
 
@@ -33,6 +33,7 @@ for (const [k, v] of params) {
 }
 // an effect saved by (or linked from) another version of the page may not exist here
 if (effectIndex(settings.effect) < 0) settings.effect = DEFAULTS.effect;
+if (bgIndex(settings.bg) < 0) settings.bg = DEFAULTS.bg;
 // A token belongs to one studio. The server this page came from shares the studio
 // page's 'token' key; a studio elsewhere gets a key of its own, so a link that names
 // another studio is never sent a token that was given for this one.
@@ -81,6 +82,11 @@ $('#effect').replaceChildren(...EFFECTS.map(e => {
   b.dataset.v = e.id; b.textContent = e.label; b.setAttribute('aria-pressed', 'false');
   if (!e.studio) b.title = 'Live only: the studio cannot render this effect';
   return b;
+}));
+$('#bg').replaceChildren(...BACKGROUNDS.map(b => {
+  const btn = document.createElement('button');
+  btn.dataset.v = b.id; btn.textContent = btn.title = b.label; btn.setAttribute('aria-pressed', 'false');
+  return btn;
 }));
 const STUDIO_EFFECTS = EFFECTS.filter(e => e.studio).map(e => e.label);
 const STUDIO_LIST = STUDIO_EFFECTS.slice(0, -1).join(', ') + ' and ' + STUDIO_EFFECTS.at(-1);
@@ -143,12 +149,14 @@ function onSettings(key) { saveSettings(); listeners.forEach(fn => fn(key)); }
 onSettingsChange(key => { if (key === 'effect') syncLiveOnly(); });
 
 // ---- meeting mode: keyboard shortcuts, since the controls are hidden
-// digits 1-9, 0 pick the first ten effects; n / b step through all of them
+// digits 1-9, 0 pick the first ten effects; n / b step through all of them, v / x
+// through the backgrounds
 const KEYS = {
   'q': ['bg', 'plasma'], 'w': ['bg', 'grid'], 'e': ['bg', 'dark'], 'r': ['bg', 'filmed'], 't': ['bg', 'source'],
 };
 const DIGITS = '1234567890';
 const stepEffect = d => EFFECTS[(effectIndex(settings.effect) + d + EFFECTS.length) % EFFECTS.length].id;
+const stepBg = d => BACKGROUNDS[(bgIndex(settings.bg) + d + BACKGROUNDS.length) % BACKGROUNDS.length].id;
 const FACE_CYCLE = ['off', 'clear', 'only'];
 if (MEETING) {
   document.body.classList.add('meeting');
@@ -170,6 +178,8 @@ if (MEETING) {
     else if (k === 'n') settings.effect = stepEffect(1);
     else if (k === 'b') settings.effect = stepEffect(-1);
     else if (KEYS[k]) [settings[KEYS[k][0]]] = [KEYS[k][1]];
+    else if (k === 'v') settings.bg = stepBg(1);
+    else if (k === 'x') settings.bg = stepBg(-1);
     else if (k === 'f') settings.face = FACE_CYCLE[(FACE_CYCLE.indexOf(settings.face) + 1) % 3];
     else if (k === 'm') settings.mirror = !settings.mirror;
     else if (k === 'c') settings.chroma = !settings.chroma;
@@ -178,7 +188,7 @@ if (MEETING) {
     else if (k === 's') $('#panel').classList.toggle('open');
     else if (k === 'h' || k === '?') $('#keys').classList.toggle('hide');
     else return;
-    syncUI(); onSettings(digit >= 0 || k === 'n' || k === 'b' ? 'effect' : k);
+    syncUI(); onSettings(digit >= 0 || k === 'n' || k === 'b' ? 'effect' : k === 'v' || k === 'x' || KEYS[k] ? 'bg' : k);
   });
   // show the key list briefly on arrival
   $('#keys').classList.remove('hide');

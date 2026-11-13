@@ -1,6 +1,7 @@
 // GLSL for the live styles. Ports of stylize.py's effects / backgrounds / compose,
 // adapted to run per pixel at camera frame rate. Coordinates are y-down pixels
 // (see gl.js); uMirror flips camera-space lookups only.
+import { BACKGROUNDS } from './effects.js';
 
 const COMMON = `#version 300 es
 precision highp float;
@@ -414,8 +415,8 @@ uniform float uOx;      // canvas x of the camera frame's left edge
 uniform int uFace;      // 0 effect everywhere, 1 keep face clear, 2 face only
 uniform vec2 uFaceRows; // person top, collar cut (0..1, y down)
 
-uniform int uBg;        // 0 plasma, 1 grid, 2 dark, 3 filmed, 4 filmed FX
-uniform vec3 uHead;     // head centre x, y and width, canvas px (for the plasma orb)
+uniform int uBg;        // index in effects.js' BACKGROUNDS
+${BACKGROUNDS.map((b, i) => `const int BG_${b.id.toUpperCase()} = ${i};\n`).join('')}uniform vec3 uHead;     // head centre x, y and width, canvas px (for the plasma orb)
 uniform float uK;       // canvas scale vs the 1080-line layouts stylize.py renders
 uniform float uTime;
 
@@ -505,6 +506,278 @@ vec3 bgDark(vec2 P) {
   return vec3(5.0, 7.0, 15.0) / 255.0 * (0.35 + 1.9 * v);
 }
 
+// ---- studio .. circuit. stylize.py's bg_studio .. bg_circuit are numpy ports of these
+// (same formulas and hashes, a few evaluated at a lower resolution): change both.
+// Sizes are in 1080-line px (times uK), so every layout and quality looks alike.
+
+// sparse twinkling stars: at most one per cell (cell px square); density = share of cells lit
+float stars(vec2 P, float cell, float density, float t) {
+  vec2 q = P / (cell * uK);
+  vec2 g = floor(q);
+  float h = hash12(g);
+  if (h > density) return 0.0;
+  vec2 c = vec2(hash12(g + 3.1), hash12(g + 7.7)) * 0.6 + 0.2;
+  float d = length(fract(q) - c) * cell;
+  float tw = 0.65 + 0.35 * sin(t * (0.8 + 2.4 * hash12(g + 1.9)) + h * 400.0);
+  return exp(-d * d * 0.9) * tw * (0.35 + 0.65 * hash12(g + 5.3));
+}
+
+// a plain backdrop for calls: slate gradient, a soft light behind the head, vignette
+vec3 bgStudio(vec2 P, float t) {
+  vec2 C = uCanvas;
+  vec3 col = mix(vec3(0x2b, 0x32, 0x3e), vec3(0x0d, 0x10, 0x16), smoothstep(0.0, 1.0, P.y / C.y)) / 255.0;
+  vec2 c = uHead.xy + vec2(sin(t * 0.11) * 0.05 * C.x, 0.06 * C.y);   // drifts very slowly
+  float r = max(uHead.z * 3.0, 380.0 * uK);
+  vec2 dv = (P - c) / vec2(r * 1.3, r);
+  col += vec3(0x5c, 0x6c, 0x84) / 255.0 * exp(-dot(dv, dv) * 1.3) * 0.75;
+  vec2 q = (P - C * 0.5) / (C * 0.5);
+  col *= 1.0 - 0.14 * dot(q, q);
+  return col + (hash12(P) - 0.5) / 255.0;                            // dither: no gradient banding
+}
+
+// out-of-focus warm lights: big near-hard discs with a brighter rim, drifting sideways
+vec3 bgBokeh(vec2 P, float t) {
+  vec2 C = uCanvas;
+  vec3 col = mix(vec3(0x14, 0x0c, 0x16), vec3(0x24, 0x14, 0x0e), P.y / C.y) / 255.0;
+  vec3 tint[4] = vec3[4](vec3(255, 176, 80), vec3(255, 120, 60), vec3(255, 96, 128), vec3(255, 226, 170));
+  for (int i = 0; i < 36; i++) {
+    float fi = float(i);
+    float z = hash12(vec2(fi, 2.3));                        // 0 far: small, dim, slow
+    float rad = (28.0 + 80.0 * z) * uK;
+    float span = C.x + 2.0 * rad;                           // wraps a radius beyond each edge
+    vec2 c = vec2(mod(hash12(vec2(fi, 8.1)) * span + t * (6.0 + 14.0 * z) * uK, span) - rad,
+                  (0.12 + 0.8 * hash12(vec2(fi, 4.6))) * C.y + sin(t * 0.3 + fi) * 12.0 * uK);
+    float d = length(P - c);
+    if (d > rad + 3.0 * uK) continue;
+    float disc = 1.0 - smoothstep(rad - 3.0 * uK, rad + 2.0 * uK, d);
+    float rim = smoothstep(rad * 0.55, rad, d) * disc;
+    float tw = 0.75 + 0.25 * sin(t * (0.5 + hash12(vec2(fi, 6.2))) + fi * 1.7);
+    col += tint[i % 4] / 255.0 * (disc * 0.16 + rim * 0.10) * (0.5 + 0.6 * z) * tw;
+  }
+  return col;
+}
+
+// northern lights: three folding curtains, green at the lower edge, violet above, rayed
+vec3 bgAurora(vec2 P, float t) {
+  vec2 C = uCanvas;
+  float y = P.y / C.y, x = P.x / C.y;
+  vec3 col = mix(vec3(0x02, 0x04, 0x10), vec3(0x06, 0x1a, 0x2a), smoothstep(0.1, 1.0, y)) / 255.0;
+  col += vec3(0.85, 0.9, 1.0) * stars(P, 9.0, 0.05, t) * (1.0 - 0.7 * y);
+  for (int i = 0; i < 3; i++) {
+    float fi = float(i);
+    float edge = 0.42 + 0.12 * fi + 0.07 * sin(x * (1.3 + 0.4 * fi) + t * (0.12 + 0.05 * fi) + fi * 2.0)
+               + 0.10 * (vnoise(vec2(x * 2.2 + fi * 9.0, t * 0.15)) - 0.5);
+    float above = edge - y;                                 // > 0 above the lower edge (y down)
+    float glow = above > 0.0 ? exp(-above / (0.16 + 0.05 * fi)) : exp(-above * above / 0.0006);
+    float rays = 0.45 + 0.55 * vnoise(vec2(x * 38.0 + fi * 31.0, t * 0.35));
+    vec3 tint = mix(vec3(0.20, 1.0, 0.55), vec3(0.62, 0.30, 1.0), clamp(above * 3.0, 0.0, 1.0));
+    col += tint * glow * rays * (0.42 - 0.1 * fi);
+  }
+  return col;
+}
+
+// deep space: domain-warped clouds in violet, magenta and teal over stars
+vec3 bgNebula(vec2 P, float t) {
+  float a = fbm(P, t * 0.3);
+  float b = fbm(P + (vec2(a, 1.0 - a) - 0.5) * 900.0 * uK + 5000.0 * uK, t * 0.2);
+  vec3 col = vec3(0x03, 0x03, 0x0c) / 255.0;
+  col += vec3(0.30, 0.10, 0.62) * smoothstep(0.38, 0.72, b) * 0.9;
+  col += vec3(1.00, 0.24, 0.62) * smoothstep(0.52, 0.80, b) * smoothstep(0.45, 0.70, a) * 0.8;
+  col += vec3(0.16, 0.70, 1.00) * smoothstep(0.55, 0.85, a) * (1.0 - smoothstep(0.40, 0.70, b)) * 0.45;
+  col += stars(P, 8.0, 0.06, t) * (1.0 - 0.7 * smoothstep(0.5, 0.8, b));
+  return col;
+}
+
+// hyperspace: streaks rushing out from the centre, longer and brighter as they near
+vec3 bgWarp(vec2 P, float t) {
+  vec2 C = uCanvas, dv = P - C * 0.5;
+  float rpx = length(dv), r = rpx / (0.5 * length(C));      // 0 centre .. 1 corner
+  float ang = atan(dv.y, dv.x) / (2.0 * PI) + 0.5;
+  vec3 col = mix(vec3(0x0c, 0x08, 0x24), vec3(0x02, 0x02, 0x08), smoothstep(0.0, 0.9, r)) / 255.0;
+  col += vec3(0.25, 0.18, 0.75) * exp(-r * r * 9.0) * 0.5;
+  for (int L = 0; L < 3; L++) {
+    float fl = float(L), N = 70.0 + 55.0 * fl;              // lanes per turn
+    float s = ang * N + fl * 0.37;
+    float id = mod(floor(s), N);                            // one lane across the atan seam
+    float h = hash12(vec2(id, fl + 1.0));
+    if (h < 0.35) continue;                                 // not every lane has a star
+    float z = fract(hash12(vec2(id, fl + 11.0)) + t * (0.18 + 0.22 * h));   // 0 far .. 1 passing
+    float head = 0.04 + 1.15 * z * z, len = 0.02 + 0.45 * z * z * z;
+    float along = smoothstep(head - len, head, r) * (1.0 - smoothstep(head, head + 0.004, r));
+    float dpx = abs(fract(s) - 0.5) * 2.0 * PI * rpx / N;    // px from the lane's centre line
+    float half_ = (0.25 + 1.1 * z) * uK;
+    float across = 1.0 - smoothstep(half_, half_ + uK, dpx);
+    float fade = 1.0 - smoothstep(0.85, 1.0, z);             // gone before the lane wraps to z = 0
+    col += mix(vec3(0.45, 0.55, 1.0), vec3(0.92, 0.95, 1.0), z) * along * across * (0.25 + 1.1 * z) * fade;
+  }
+  return col;
+}
+
+// retro sunset: banded sun behind two drifting mountain ranges, mirrored in rippled water
+vec3 sunsetSky(vec2 P, float t, float horizon) {
+  vec2 C = uCanvas;
+  float y = P.y / horizon;                                  // 0 top .. 1 horizon
+  vec3 col = mix(vec3(0x14, 0x06, 0x2e), vec3(0x6a, 0x12, 0x5a), smoothstep(0.0, 0.75, y));
+  col = mix(col, vec3(0xff, 0x6a, 0x3c), smoothstep(0.65, 1.0, y)) / 255.0;
+  float S = min(C.x, C.y);                                  // sized by the short side: portrait too
+  float R = 0.27 * S;
+  vec2 sc = vec2(C.x * 0.5, horizon - R * 0.42);
+  float d = length(P - sc);
+  float v = (P.y - sc.y + R) / (2.0 * R);                   // 0 sun top .. 1 sun bottom
+  vec3 sun = mix(vec3(1.0, 0.9, 0.36), vec3(1.0, 0.25, 0.55), clamp(v, 0.0, 1.0));
+  float gap = clamp((v - 0.2) * 0.8, 0.0, 0.6);             // the cut bands widen downwards
+  float cut = v > 0.2 ? step(fract(v * 9.0 - t * 0.35), gap) : 0.0;
+  col += vec3(1.0, 0.35, 0.45) * exp(-pow(max(d - R, 0.0) / (0.22 * S), 2.0)) * 0.35;
+  col = mix(col, sun, (1.0 - smoothstep(R - 1.5 * uK, R + 1.5 * uK, d)) * (1.0 - cut));
+  for (int i = 0; i < 2; i++) {
+    float fi = float(i);
+    float x = P.x / C.y * (2.0 + 1.5 * fi) + t * (0.02 + 0.03 * fi) + fi * 7.0;
+    float ridge = horizon - S * ((0.13 - 0.05 * fi) * vnoise(vec2(x, fi))
+                                   + 0.05 * vnoise(vec2(x * 4.0, fi + 3.0)) + 0.01);
+    vec3 rock = mix(vec3(0x2a, 0x0a, 0x3c), vec3(0x12, 0x04, 0x22), fi) / 255.0
+              + vec3(1.0, 0.3, 0.6) * exp(-max(P.y - ridge, 0.0) / (3.0 * uK)) * 0.35;   // lit rim
+    col = mix(col, rock, smoothstep(ridge - uK, ridge + uK, P.y));
+  }
+  return col;
+}
+vec3 bgSunset(vec2 P, float t) {
+  float horizon = floor(uCanvas.y * 0.64);
+  if (P.y < horizon) return sunsetSky(P, t, horizon);
+  float dy = P.y - horizon, depth = dy / (uCanvas.y - horizon);
+  float wob = sin(dy / uK * 0.35 - t * 2.2 + sin(P.x / uK * 0.013) * 2.0) * (2.0 + dy * 0.05);
+  vec3 col = sunsetSky(vec2(P.x + wob, horizon - dy), t, horizon) * vec3(0.55, 0.5, 0.75);
+  return col * (1.0 - 0.5 * depth) * (0.88 + 0.12 * sin(dy / uK * 0.9 - t * 3.0));
+}
+
+// one bar of a glyph: 0-5 horizontal (rows 0, 3, 6; left / right half), 6-11 vertical
+// (columns 0, 2, 4; top / bottom half). About half of a glyph's bars are drawn, but
+// never the whole centre cross (2, 3, 8, 9): with arms on its ends it can make a swastika.
+float rawBar(vec2 g, float glyph, float bar) {
+  return step(0.5, hash12(vec2(bar + glyph * 13.0, g.x * 7.0 + g.y * 131.0)));
+}
+float glyphBar(vec2 g, float glyph, float bar) {
+  float on = rawBar(g, glyph, bar);
+  if (bar == 9.0) on *= 1.0 - rawBar(g, glyph, 2.0) * rawBar(g, glyph, 3.0) * rawBar(g, glyph, 8.0);
+  return on;
+}
+// falling columns of glyphs drawn like a segment display on 5x7 dots;
+// x = brightness, y = 1 on a column's leading glyph
+vec2 rainLayer(vec2 P, float t, float cw, float speed, float seed) {
+  vec2 cell = vec2(cw, cw * 1.3) * uK;
+  vec2 q = P / cell, g = floor(q);
+  float hc = hash12(vec2(g.x, seed));
+  float len = 8.0 + 22.0 * hash12(vec2(g.x, seed + 1.0));  // trail, in glyphs
+  float cycle = floor(uCanvas.y / cell.y) + len;
+  float behind = floor(mod(hc * cycle + t * speed * (0.6 + 0.8 * hc), cycle)) - g.y;
+  if (behind < 0.0 || behind > len) return vec2(0.0);
+  vec2 sub = floor(fract(q) * vec2(7.0, 9.0)) - 1.0;        // 5x7 dots with a one-dot margin
+  if (sub.x < 0.0 || sub.x > 4.0 || sub.y < 0.0 || sub.y > 6.0) return vec2(0.0);
+  float hg = hash12(g + seed * 7.0);
+  float glyph = floor(t * (0.5 + 3.0 * hg) + hg * 10.0);    // glyphs change now and then
+  float on = 0.0;
+  if (mod(sub.y, 3.0) == 0.0) {
+    if (sub.x <= 2.0) on = max(on, glyphBar(g, glyph, sub.y / 3.0 * 2.0));
+    if (sub.x >= 2.0) on = max(on, glyphBar(g, glyph, sub.y / 3.0 * 2.0 + 1.0));
+  }
+  if (mod(sub.x, 2.0) == 0.0) {
+    if (sub.y <= 3.0) on = max(on, glyphBar(g, glyph, 6.0 + sub.x));
+    if (sub.y >= 3.0) on = max(on, glyphBar(g, glyph, 7.0 + sub.x));
+  }
+  return vec2(on * pow(1.0 - behind / (len + 1.0), 1.5), step(behind, 0.5));
+}
+vec3 bgRain(vec2 P, float t) {
+  vec2 far = rainLayer(P, t, 11.0, 7.0, 3.0), near = rainLayer(P, t, 20.0, 9.0, 1.0);
+  return vec3(0.0, 0.03, 0.012) + vec3(0.05, 0.45, 0.2) * far.x * 0.45
+       + mix(vec3(0.12, 0.95, 0.45), vec3(0.85, 1.0, 0.9), near.y) * near.x;
+}
+
+// caustics: the edges of a wandering Voronoi network (F2 - F1), light shafts, bubbles
+float voronoiEdge(vec2 p, float t) {
+  vec2 g = floor(p), f = fract(p);
+  float d1 = 8.0, d2 = 8.0;
+  for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      vec2 o = vec2(i, j);
+      vec2 h = vec2(hash12(g + o), hash12(g + o + 19.7));
+      float d = length(o + 0.5 + 0.4 * sin(t * (0.6 + 0.6 * h) + h * 6.2831) - f);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+    }
+  return d2 - d1;
+}
+vec3 bgOcean(vec2 P, float t) {
+  vec2 C = uCanvas;
+  float y = P.y / C.y;
+  vec3 col = mix(vec3(0x0b, 0x5a, 0x8c), vec3(0x02, 0x12, 0x2a), smoothstep(0.0, 1.0, y)) / 255.0;
+  vec2 p0 = P / (150.0 * uK);
+  vec2 p = p0 + (vec2(vnoise(p0 * 0.5 + t * 0.2), vnoise(p0 * 0.5 + 7.0 - t * 0.2)) - 0.5) * 0.6;
+  float caus = pow(1.0 - smoothstep(0.0, 0.16, voronoiEdge(p, t)), 3.0);
+  float patch_ = 0.35 + 1.1 * vnoise(p0 * 0.35 + 40.0 + t * 0.1);   // brighter and fainter stretches
+  col += vec3(0.55, 0.95, 1.0) * caus * patch_ * (0.6 - 0.35 * y);
+  float shaft = vnoise(vec2(P.x / C.y * 6.0 + y * 1.2, t * 0.15));
+  col += vec3(0.35, 0.75, 0.9) * shaft * shaft * shaft * (1.0 - y) * 0.35;
+  for (int i = 0; i < 14; i++) {
+    float fi = float(i);
+    float rad = (3.0 + 7.0 * hash12(vec2(fi, 2.0))) * uK;
+    float span = C.y + 4.0 * rad;
+    vec2 c = vec2(hash12(vec2(fi, 4.0)) * C.x + sin(t * 1.3 + fi) * 6.0 * uK,
+                  C.y + 2.0 * rad - mod(hash12(vec2(fi, 5.0)) * span + t * (40.0 + 60.0 * hash12(vec2(fi, 3.0))) * uK, span));
+    float d = length(P - c);
+    col += vec3(0.7, 0.95, 1.0) * (smoothstep(rad - 1.5 * uK, rad, d) - smoothstep(rad, rad + uK, d)) * 0.5;
+  }
+  return col;
+}
+
+// lava lamp: eight metaballs rising and sinking slowly, glowing at their edges
+vec3 bgLava(vec2 P, float t) {
+  vec2 C = uCanvas;
+  float y = P.y / C.y, field = 0.0;
+  for (int i = 0; i < 8; i++) {
+    float fi = float(i);
+    vec2 h = vec2(hash12(vec2(fi, 1.0)), hash12(vec2(fi, 2.0)));
+    vec2 c = vec2((0.08 + 0.84 * h.x) * C.x + sin(t * 0.21 + fi * 2.1) * 0.06 * C.x,
+                  (0.5 + 0.55 * sin(t * (0.07 + 0.06 * h.y) + fi * 1.7)) * C.y);
+    vec2 dv = (P - c) / ((0.07 + 0.07 * h.y) * min(C.x, C.y));
+    field += 1.0 / (dot(dv, dv) + 1e-3);
+  }
+  vec3 col = mix(vec3(0x2a, 0x06, 0x3a), vec3(0x0a, 0x02, 0x18), y) / 255.0;
+  vec3 wax = mix(vec3(1.0, 0.75, 0.2), vec3(1.0, 0.2, 0.45), y);
+  col += wax * smoothstep(0.35, 1.0, field) * 0.10;          // faint glow around the blobs
+  vec3 blob = wax * (0.72 + 0.28 * clamp((field - 1.0) / 2.0, 0.0, 1.0));
+  return mix(col, blob, smoothstep(0.97, 1.03, field));
+}
+
+// circuit board: right-angle traces between cell centres, pads on dead ends, and
+// pulses of light running along each row and column
+vec3 bgCircuit(vec2 P, float t) {
+  float cell = 44.0 * uK;
+  vec2 q = P / cell, g = floor(q), f = fract(q) - 0.5;      // f: from the cell centre, cells
+  // half-traces from this centre: right, left, down, up (an edge belongs to its left / top cell)
+  float e[4] = float[4](step(0.55, hash12(g)), step(0.55, hash12(g - vec2(1, 0))),
+                        step(0.60, hash12(g + 71.3)), step(0.60, hash12(g - vec2(0, 1) + 71.3)));
+  vec2 dir[4] = vec2[4](vec2(1, 0), vec2(-1, 0), vec2(0, 1), vec2(0, -1));
+  float dist = 1e9, pulse = 0.0;
+  for (int k = 0; k < 4; k++) {
+    if (e[k] < 0.5) continue;
+    float a = clamp(dot(f, dir[k]), 0.0, 0.5);              // along the half-segment
+    float dk = length(f - dir[k] * a) * cell;
+    if (dk < dist) dist = dk;
+    // a comet per row (horizontal) / column (vertical), each with its own speed and way
+    float lane = k < 2 ? g.y : g.x + 500.0, hl = hash12(vec2(lane, 9.0));
+    float coord = (k < 2 ? P.x : P.y) / uK * (hl > 0.5 ? 1.0 : -1.0);
+    float ph = fract(coord / 520.0 + t * (0.25 + 0.3 * hl) + hl * 7.0);   // head first, tail behind
+    pulse = max(pulse, exp(-ph * 14.0) * (1.0 - smoothstep(2.0 * uK, 4.0 * uK, dk)));
+  }
+  float deg = e[0] + e[1] + e[2] + e[3];
+  float r = length(f) * cell, w = 2.2 * uK;
+  vec3 col = vec3(0x04, 0x16, 0x12) / 255.0;
+  col += vec3(0.20, 0.55, 0.42) * 0.55 * (1.0 - smoothstep(w - 0.75 * uK, w + 0.75 * uK, dist));
+  if (deg == 1.0) {                                         // a pad (ring) on each dead end
+    float ring = abs(r - 5.5 * uK);
+    col = mix(col, vec3(0.85, 0.65, 0.25) * 0.8, 1.0 - smoothstep(1.6 * uK, 2.6 * uK, ring));
+  }
+  return col + vec3(0.5, 1.0, 0.85) * pulse;
+}
+
 // compose(src_bg=...): a blurred, dimmed cover-fill of the frame, with the sharp
 // frame placed under the subject with the SAME transform, so the wall lines up.
 // fx = true ("Filmed FX") uses the stylised frame instead of the real one.
@@ -530,9 +803,20 @@ vec3 bgFilmed(vec2 P, vec2 uv, bool inside, bool fx) {
 }
 
 vec3 background(vec2 P, vec2 uv, bool inside) {
-  if (uBg == 0) return bgPlasma(P, uTime);
-  if (uBg == 1) return bgGrid(P, uTime);
-  if (uBg == 3 || uBg == 4) return bgFilmed(P, uv, inside, uBg == 4);
+  float t = uTime;
+  if (uBg == BG_PLASMA) return bgPlasma(P, t);
+  if (uBg == BG_GRID) return bgGrid(P, t);
+  if (uBg == BG_FILMED || uBg == BG_SOURCE) return bgFilmed(P, uv, inside, uBg == BG_SOURCE);
+  if (uBg == BG_STUDIO) return bgStudio(P, t);
+  if (uBg == BG_BOKEH) return bgBokeh(P, t);
+  if (uBg == BG_AURORA) return bgAurora(P, t);
+  if (uBg == BG_NEBULA) return bgNebula(P, t);
+  if (uBg == BG_WARP) return bgWarp(P, t);
+  if (uBg == BG_SUNSET) return bgSunset(P, t);
+  if (uBg == BG_RAIN) return bgRain(P, t);
+  if (uBg == BG_OCEAN) return bgOcean(P, t);
+  if (uBg == BG_LAVA) return bgLava(P, t);
+  if (uBg == BG_CIRCUIT) return bgCircuit(P, t);
   return bgDark(P);
 }
 
@@ -545,7 +829,7 @@ void main() {
   vec3 layer = styled.rgb;
   // < 1 where an effect is see-through (hologram), 1 for the rest. A filmed background
   // has no clean plate: behind the subject is the subject, so it stays opaque there.
-  float see = uBg == 3 || uBg == 4 ? 1.0 : styled.a;
+  float see = uBg == BG_FILMED || uBg == BG_SOURCE ? 1.0 : styled.a;
   if (uFace != 0 && uHasMask) {
     // face_protect: head + neck down to the collar, times the person mask, softened
     // (its 61 px Gaussian is ~2.5% of the frame height)

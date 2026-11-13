@@ -13,7 +13,8 @@ from `web/camera/` at build time, not forked).
 
 Click the toolbar icon: turn it on or off, and pick the effect, background, face mode,
 resolution, mirror, grain and chroma. Changes apply live in a running call. **Alt+Shift+E**
-cycles through the effects (change it at `chrome://extensions/shortcuts`).
+cycles through the effects and **Alt+Shift+G** through the backgrounds (Alt+Shift+B is Chrome's own bookmarks-bar key; change them at
+`chrome://extensions/shortcuts`).
 
 - Leave **Mirror** off: Meet, Teams and Zoom mirror your self-view themselves, and
   mirroring here would flip what everyone else sees.

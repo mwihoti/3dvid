@@ -1,7 +1,8 @@
-// Service worker: fills in default settings, the Alt+Shift+E "next effect" command and
-// an OFF badge while the effects are switched off. All state is in chrome.storage.local,
+// Service worker: fills in default settings, the Alt+Shift+E "next effect" and
+// Alt+Shift+G "next background" commands, and an OFF badge while the effects are
+// switched off. All state is in chrome.storage.local,
 // which the pages' engines watch, so a change here restyles a running call at once.
-import { EFFECTS } from './lib/effects.js';
+import { EFFECTS, BACKGROUNDS } from './lib/effects.js';
 import { DEFAULTS, loadSettings } from './settings.js';
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -12,11 +13,13 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 chrome.runtime.onStartup.addListener(badge);
 
+const CYCLES = { 'cycle-effect': ['effect', EFFECTS], 'cycle-background': ['bg', BACKGROUNDS] };
 chrome.commands.onCommand.addListener(async command => {
-  if (command !== 'cycle-effect') return;
-  const { effect } = await loadSettings();
-  const i = EFFECTS.findIndex(e => e.id === effect);
-  await chrome.storage.local.set({ effect: EFFECTS[(i + 1) % EFFECTS.length].id });
+  if (!CYCLES[command]) return;
+  const [key, list] = CYCLES[command];
+  const current = (await loadSettings())[key];
+  const i = list.findIndex(e => e.id === current);
+  await chrome.storage.local.set({ [key]: list[(i + 1) % list.length].id });
 });
 
 chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.enabled) badge(); });

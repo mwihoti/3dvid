@@ -35,8 +35,8 @@ h2{margin:12px 0 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:1.
 .seg button[aria-pressed=true]{background:linear-gradient(180deg,#182248,#0e1530);color:var(--ink);
   border-color:var(--cyan);box-shadow:0 0 0 1px rgba(57,198,255,.25),0 0 14px -6px var(--cyan)}
 #effect{grid-template-columns:repeat(4,minmax(0,1fr))}
-#bg{grid-template-columns:repeat(5,auto)}   /* sized by label: "Filmed FX" needs more than a fifth */
-#bg button{padding:6px 5px}
+#bg{grid-template-columns:repeat(5,minmax(0,1fr))}   /* 3 rows: the popup must stay under Chrome's 600 px */
+#bg button{padding:6px 1px;font-size:11.5px}
 #face,#quality{grid-template-columns:repeat(3,minmax(0,1fr))}
 .checks{display:flex;gap:14px;margin-top:10px}
 .chk{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--ink)}
@@ -69,7 +69,7 @@ a:hover{text-decoration:underline}
     <label class="chk" title="Chromatic aberration"><input type="checkbox" id="chroma">Chroma</label>
   </div>
 </div>
-<p class="note" id="note">Changes apply live in the call. <b>Alt+Shift+E</b> picks the next effect.
+<p class="note" id="note">Changes apply live in the call. <b>Alt+Shift+E</b> picks the next effect, <b>Alt+Shift+G</b> the next background.
   Switched on after the call opened the camera? Re-select the camera there.</p>
 <p class="note"><a href="https://mwihoti.github.io/3dvid/" target="_blank" rel="noopener">Open the full 3dvid camera page</a></p>
 <script type="module" src="popup.js"></script>

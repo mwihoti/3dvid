@@ -32,9 +32,15 @@ JOBS_FILE = os.path.join(DATA_DIR, "jobs.json")
 WEB = os.path.join(HERE, "web")
 os.environ.setdefault("STYLIZE_CACHE_DIR", os.path.join(DATA_DIR, ".stylize_cache"))  # inherited by stylize.py
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "").strip()  # empty = no auth (local / tunnel use)
+# stylize.py's --bg choices (its BACKGROUNDS dict plus the two filmed ones), kept here
+# because this module must import without the render stack; web/camera/effects.js
+# lists the same ids
+BACKGROUNDS = ("plasma", "grid", "dark", "studio", "bokeh", "aurora", "nebula", "warp", "sunset",
+               "rain", "ocean", "lava", "circuit", "source", "filmed")
 # Origins allowed to call the API from another site, e.g. the camera page on GitHub
 # Pages talking to a studio behind a tunnel. Comma-separated, or "*". Empty = same
 # origin only. The bearer token still applies; CORS only lets the browser ask.
+
 def _origin(o: str) -> str:
     """A browser's Origin header is scheme://host[:port] and CORSMiddleware compares it
     exactly, so reduce a pasted site URL (path, trailing slash) to that. "*" passes through."""
@@ -360,7 +366,7 @@ async def render(
         raise HTTPException(400, "bad face_mode")
     face_pad = min(max(face_pad, 0.0), 0.4)
     if effect not in ("voxel", "contour", "both", "clean") \
-       or bg not in ("plasma", "grid", "dark", "source", "filmed") \
+       or bg not in BACKGROUNDS \
        or layout not in ("portrait", "wide", "square", "native"):
         raise HTTPException(400, "bad effect/bg/layout")
     try:
